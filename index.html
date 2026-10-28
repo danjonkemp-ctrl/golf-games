@@ -901,6 +901,14 @@ const DEFAULT_META = () => ({ players:[{id:"dan",name:"Dan",hcp:0},{id:"will",na
 const roster = () => (meta && meta.players) || [];
 const rosterBy = id => roster().find(p => p.id===id);
 const myName = () => (rosterBy(me) || {}).name || "Someone";
+/* a profile belongs to the phone that claimed it. Unclaimed profiles (added for a mate) can be edited by anyone until that mate claims it */
+const ownedByOther = p => !!(p && p.owner && p.owner!==device);
+const canEdit = p => !!p && !ownedByOther(p);
+function claim(id){
+  const list = clone(roster()), q = list.find(x => x.id===id); if (!q || q.owner===device) return;
+  q.owner = device; meta.players = list; store.saveMeta({ players:list });
+}
+const setupPerson = id => rosterBy(id) || ((ui.setup && ui.setup.guests) || []).find(g => g.id===id);
 const live = () => round && round.status==="live" && meta && meta.active===round.id;
 
 /* ---------- courses ---------- */
@@ -1030,7 +1038,7 @@ function newSetup(game){
 function setupProblem(s){
   const g = GAMES[s.game];
   if (!ENGINE.playerCountOk(s.game, s.sel.length)) return `${g.name} needs ${g.needs.toLowerCase()}. You have ${s.sel.length}.`;
-  if (s.game==="three"){ const miss = s.sel.find(id => (s.clubs[id]||[]).length!==3); if (miss) return `${rosterBy(miss).name} needs to pick 3 clubs.`; }
+  if (s.game==="three"){ const miss = s.sel.find(id => (s.clubs[id]||[]).length!==3); if (miss) return `${(setupPerson(miss)||{}).name} needs to pick 3 clubs.`; }
   return "";
 }
 function renderSetup(){
@@ -1038,15 +1046,16 @@ function renderSetup(){
   if (!modes.some(m => m[0]===s.holesMode)) s.holesMode = modes[0][0];
   const team = s.game==="alt" || ((s.game==="match"||s.game==="nassau") && s.sel.length===4);
   const problem = setupProblem(s);
-  const nm = id => esc((rosterBy(id)||{}).name||"?");
+  const nm = id => esc((setupPerson(id)||{}).name||"?");
+  s.guests = s.guests || [];
   $("#screen").innerHTML = `
   <div class="ghead"><span class="ic">${gameIconBig(s.game)}</span><div><h1>${esc(g.name)}</h1><p>${esc(g.tag)}</p></div></div>
   <div class="rules">${RULES[s.game]}</div>
   <div class="lab">Players <span>${esc(g.needs)}</span></div>
-  ${roster().map(p => { const k = s.sel.indexOf(p.id); return `<div class="prow ${k>=0?"on":""}"><button class="ord" data-a="toggleP" data-v="${p.id}" aria-label="${k>=0?"Remove":"Add"} ${esc(p.name)}">${k>=0?k+1:""}</button>
+  ${roster().concat(s.guests).map(p => { const k = s.sel.indexOf(p.id); return `<div class="prow ${k>=0?"on":""}"><button class="ord" data-a="toggleP" data-v="${p.id}" aria-label="${k>=0?"Remove":"Add"} ${esc(p.name)}">${k>=0?k+1:""}</button>
     <button style="display:flex;align-items:center;gap:12px;flex:1" data-a="toggleP" data-v="${p.id}">${avatar(p)}<span class="nm">${esc(p.name)}<small>${s.useHcp?`Handicap ${+p.hcp||0}`:(k===0&&s.game==="wolf"?"Wolf on the first hole":lineOf(p)?esc(quote(lineOf(p))):k>=0?"Playing":"Tap to add")}</small></span></button>
-    ${p.id===me?`<span class="tag w">You</span>`:""}<button class="ed" data-a="editP" data-v="${p.id}" aria-label="Edit ${esc(p.name)}">${ic("pen")}</button></div>`; }).join("")}
-  <button class="btn line" data-a="addP" style="height:46px">${ic("plus")}Add player</button>
+    ${p.id===me?`<span class="tag w">You</span>`:p.guest?`<span class="tag a">Guest</span>`:""}${p.guest?`<button class="ed" data-a="rmGuest" data-v="${p.id}" aria-label="Remove ${esc(p.name)}">${ic("x")}</button>`:`<button class="ed" data-a="editP" data-v="${p.id}" aria-label="${canEdit(p)?"Edit":"View"} ${esc(p.name)}">${ic(canEdit(p)?"pen":"info")}</button>`}</div>`; }).join("")}
+  <button class="btn line" data-a="addGuest" style="height:46px">${ic("plus")}Add a guest for this round</button>
   ${s.game==="wolf"&&s.sel.length>1?`<button class="btn line" data-a="shuffle" style="height:46px;margin-top:6px">Throw the tee for order</button>`:""}
   ${team&&s.sel.length===4?`<div class="sides"><div class="side"><small>Pair 1</small>${nm(s.sel[0])} & ${nm(s.sel[1])}</div><span class="vs">VS</span><div class="side"><small>Pair 2</small>${nm(s.sel[2])} & ${nm(s.sel[3])}</div></div><button class="btn line" data-a="shuffle" style="height:42px;margin-top:8px">Shuffle pairs</button>`:""}
   ${s.game==="three"?s.sel.map(id=>`<div class="lab" style="margin-top:16px">${nm(id)}’s clubs <span>${(s.clubs[id]||[]).length} of 3</span></div><div class="clubs">${CLUBS.map(cl=>`<button data-a="club" data-v="${id}|${esc(cl)}" aria-pressed="${(s.clubs[id]||[]).includes(cl)}">${esc(cl)}</button>`).join("")}</div>`).join(""):""}
@@ -1227,7 +1236,7 @@ function allGames(){
   if (!done.length) return `<div class="status">Finished rounds land here. Wins, rounds played and who’s on a heater.</div>`;
   const st = {};
   roster().forEach(p => st[p.id] = { name:p.name, p, played:0, wins:0 });
-  done.forEach(r => r.players.forEach(p => { const s = st[p.id] || (st[p.id] = { name:p.name, p, played:0, wins:0 }); s.played++; if ((r.winners||[]).includes(p.id)) s.wins++; }));
+  done.forEach(r => r.players.forEach(p => { if (p.guest) return; const s = st[p.id] || (st[p.id] = { name:p.name, p, played:0, wins:0 }); s.played++; if ((r.winners||[]).includes(p.id)) s.wins++; }));
   const rows = Object.values(st).filter(s => s.played).sort((a,b) => b.wins-a.wins || (b.wins/b.played)-(a.wins/a.played));
   return `<div class="lbh" style="grid-template-columns:1fr auto auto auto;gap:10px"><span>Player</span><span>Wins</span><span>Played</span><span>Win %</span></div>
   ${rows.map((s,k) => `<div class="stat" ${k===0?'style="color:var(--lime)"':""}><span class="who">${avatar(s.p,"av sm")}${esc(s.name)}</span><em>${s.wins}</em><em class="dim">${s.played}</em><em>${Math.round(s.wins/s.played*100)}%</em></div>`).join("")}
@@ -1284,14 +1293,21 @@ function pickScore(p, isTeam){
     sh => sh.querySelectorAll("[data-n]").forEach(b => b.onclick = () => { (isTeam ? d.t : d.s)[p] = +b.dataset.n; haptic(); closeSheet(); syncPlay(); bump($(`.srow[data-${isTeam?"t":"p"}="${p}"] .sv b`)); }));
 }
 function askWho(next){
-  openSheet(`<h3>Who’s holding this phone?</h3><p>So the group can see who saved each hole.</p><div class="whogrid">${roster().map(p=>`<button data-me="${p.id}">${avatar(p,"av sm")}${esc(p.name)}</button>`).join("")}</div><button class="btn line" id="imnew" style="margin-top:12px">${ic("plus")}I’m new, create my profile</button><button class="linkbtn" data-me="">Just watching</button>`,
+  openSheet(`<h3>Who’s holding this phone?</h3><p>Pick your name and this phone remembers you. Your profile is yours, only you can change it.</p><div class="whogrid">${roster().map(p=>`<button data-me="${p.id}">${avatar(p,"av sm")}<span style="min-width:0;text-align:left">${esc(p.name)}${ownedByOther(p)?`<small style="display:block;font-size:10px;color:var(--stone);font-weight:500">On another phone</small>`:""}</span></button>`).join("")}</div><button class="btn line" id="imnew" style="margin-top:12px">${ic("plus")}I’m new, create my profile</button><button class="linkbtn" data-me="">Just watching</button>`,
     sh => {
-      sh.querySelectorAll("[data-me]").forEach(b => b.onclick = () => { me = b.dataset.me || null; localStorage.setItem(LSK.me, me || ""); haptic(); render({ keepScroll:true }); if (next && me) next(me); else closeSheet(); });
+      const pick = id => { me = id || null; localStorage.setItem(LSK.me, me || ""); if (me) claim(me); haptic(); render({ keepScroll:true }); if (next && me) next(me); else { closeSheet(); if (me) toast(`Hi ${myName()}. This phone will remember you.`); } };
+      sh.querySelectorAll("[data-me]").forEach(b => b.onclick = () => {
+        const p = rosterBy(b.dataset.me);
+        if (p && ownedByOther(p)) openSheet(`<div class="avhead"><div class="avbig">${avSVG(avOf(p))}</div><div><h3>${esc(p.name)}</h3><p>This profile is set up on another phone.</p></div></div><p style="margin-top:16px">If this is you on a new phone, move your profile here. Your old phone will then just watch.</p><button class="btn go" id="mv">Yes, it’s me. Move it here</button><button class="linkbtn" id="nomv">That’s not me</button>`,
+          s2 => { s2.querySelector("#mv").onclick = () => pick(p.id); s2.querySelector("#nomv").onclick = () => askWho(next); });
+        else pick(b.dataset.me);
+      });
       sh.querySelector("#imnew").onclick = () => { haptic(); editPlayer(null, { self:true }); };
     });
 }
 function avatarDesigner(id, after){
   const p = rosterBy(id); if (!p) return;
+  if (ownedByOther(p)) { viewPlayer(id); return; }
   let a = avOf(p), line = lineOf(p);
   const sw = k => AV_OPT[k].map(c => `<button class="sw8" data-k="${k}" data-o="${c}" aria-pressed="${a[k]===c}" style="--c:${c}" aria-label="Colour ${c}"></button>`).join("");
   const ops = k => AV_OPT[k].map(o => `<button class="ao" data-k="${k}" data-o="${o}" aria-pressed="${a[k]===o}">${avSVG({ ...a, [k]:o })}<span>${AV_LABEL[o]}</span></button>`).join("");
@@ -1317,10 +1333,31 @@ function avatarDesigner(id, after){
     };
   });
 }
+function guestSheet(){
+  openSheet(`<h3>Add a guest</h3><p>For someone joining just this round. They aren’t added to the group and won’t appear in the All Games table.</p>
+    <label class="lbl" for="gn">Name</label><input class="field" id="gn" maxlength="14" autocomplete="off">
+    <label class="lbl" for="gh">Handicap</label><input class="field" id="gh" type="number" inputmode="numeric" min="0" max="54" value="0">
+    <button class="btn go" id="gsave" style="margin-top:18px">Add guest</button>`,
+  sh => { setTimeout(() => sh.querySelector("#gn").focus(), 350);
+    sh.querySelector("#gsave").onclick = () => {
+      const name = sh.querySelector("#gn").value.trim().slice(0,14); if (!name){ toast("Add their name first"); return; }
+      const s = ui.setup, g = GAMES[s.game], max = g.sizes ? Math.max(...g.sizes) : g.max;
+      const guest = { id:"guest-"+newId(), name, hcp:Math.max(0, Math.min(54, Math.round(+sh.querySelector("#gh").value||0))), guest:true };
+      s.guests.push(guest); if (s.sel.length < max) s.sel.push(guest.id);
+      closeSheet(); haptic(); toast(s.sel.includes(guest.id) ? `${name} is in as a guest` : `${name} added. ${g.name} is full, swap someone out to add them`); render({ keepScroll:true });
+    }; });
+}
+function viewPlayer(id){
+  const p = rosterBy(id); if (!p) return;
+  openSheet(`<div class="avhead"><div class="avbig">${avSVG(avOf(p))}</div><div style="min-width:0"><h3>${esc(p.name)}</h3><p class="lime" style="margin:4px 0 6px">${esc(quote(lineOf(p))) || "No catchline yet"}</p><p style="margin:0">Handicap ${+p.hcp||0}</p></div></div>
+    <p style="margin-top:18px">This is ${esc(p.name)}’s profile. Only ${esc(p.name)} can change it, from their own phone, and it updates on everyone’s phone when they do.</p>
+    <button class="btn line" id="vclose">Close</button>`, sh => { sh.querySelector("#vclose").onclick = closeSheet; });
+}
 function editPlayer(id, opts={}){
+  if (id && ownedByOther(rosterBy(id))) { viewPlayer(id); return; }
   const p = id ? rosterBy(id) : { id:"", name:"", hcp:0 };
   const inLive = live() && round.players.some(x => x.id===id);
-  openSheet(`<h3>${id?"Edit player":opts.self?"Create your profile":"Add player"}</h3><p>Handicap is only used when handicaps are switched on for a game.</p>
+  openSheet(`<h3>${id?"Edit player":opts.self?"Create your profile":"Add player"}</h3><p>${opts.self?"This is your profile. Only you can change it, and it shows on everyone’s phone.":id?"Handicap is only used when handicaps are switched on for a game.":"For a mate who hasn’t opened the app yet. When they do, they pick their name and it becomes theirs."}</p>
     <label class="lbl" for="pn">Name</label><input class="field" id="pn" maxlength="14" value="${esc(p.name)}" autocomplete="off">
     <label class="lbl" for="ph">Handicap</label><input class="field" id="ph" type="number" inputmode="numeric" min="0" max="54" value="${+p.hcp||0}">
     <label class="lbl" for="pl">Catchline</label><input class="field" id="pl" maxlength="40" value="${esc(lineOf(p))}" placeholder="${esc(LINES[hash(p.name||"x")%LINES.length])}" autocomplete="off">
@@ -1334,7 +1371,7 @@ function editPlayer(id, opts={}){
       const list = clone(roster());
       let nid = id;
       if (id){ const q = list.find(x => x.id===id); q.name = name; q.hcp = hcp; q.line = line; }
-      else { nid = name.toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,10) + "-" + Math.random().toString(36).slice(2,5); list.push({ id:nid, name, hcp, line }); if (ui.setup && ui.setup.sel.length < 6) ui.setup.sel.push(nid); }
+      else { nid = name.toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,10) + "-" + Math.random().toString(36).slice(2,5); const np = { id:nid, name, hcp, line }; if (opts.self) np.owner = device; list.push(np); if (ui.setup && ui.setup.sel.length < 6) ui.setup.sel.push(nid); }
       meta.players = list; store.saveMeta({ players:list });
       if (inLive){ const pl = clone(round.players); const q = pl.find(x => x.id===id); q.name = name; q.hcp = hcp; q.line = line; round.players = pl; store.saveRound(round.id, { players:pl, updatedAt:Date.now(), lastBy:device, lastMsg:"" }); }
       if (!id){ if (opts.self){ me = nid; localStorage.setItem(LSK.me, nid); } render({ keepScroll:true }); avatarDesigner(nid); return; }
@@ -1414,7 +1451,7 @@ function startGame(){
   const s = ui.setup, c = courseById(s.courseId), holes = buildHoles(c, s.holesMode);
   if (!holes){ cardEditor(c, () => startGame()); return; }
   const go2 = () => {
-    const players = s.sel.map(id => { const p = rosterBy(id); const o = { id:p.id, name:p.name, hcp:+p.hcp||0 }; if (p.av) o.av = { ...p.av }; if (p.line) o.line = p.line; if (s.game==="three") o.clubs = (s.clubs[id]||[]).slice(); return o; });
+    const players = s.sel.map(id => { const p = setupPerson(id); const o = { id:p.id, name:p.name, hcp:+p.hcp||0 }; if (p.guest) o.guest = true; if (p.av) o.av = { ...p.av }; if (p.line) o.line = p.line; if (s.game==="three") o.clubs = (s.clubs[id]||[]).slice(); return o; });
     const id = newId(), now = Date.now();
     const r = { id, game:s.game, courseId:c.id, courseName:c.name, holesMode:s.holesMode, holes, players, settings:{ ...s.settings }, useHcp:!!s.useHcp, results:{}, status:"live", createdAt:now, updatedAt:now, lastBy:device, lastMsg:`${myName()} started ${GAMES[s.game].name}`, winners:[] };
     if (live()) store.saveRound(round.id, { status:"ended", updatedAt:now });
@@ -1466,6 +1503,11 @@ function onMeta(d, m){
   const prevActive = meta && meta.active;
   meta = { ...DEFAULT_META(), ...d };
   if (meta.active !== activeId) follow(meta.active);
+  if (me && rosterBy(me) && !(m && m.fromCache)){
+    const p = rosterBy(me);
+    if (!p.owner) claim(me);
+    else if (p.owner!==device){ me = null; localStorage.setItem(LSK.me, ""); toast(`${p.name}’s profile moved to another phone. This one is now watching.`); }
+  }
   if (prevActive && !meta.active && ui.tab==="play") ui.tab = "home";
   softRender();
 }
@@ -1611,7 +1653,9 @@ const ACT = {
   setup: v => { haptic(); ui.setup = newSetup(v); go("home", { type:"setup" }); },
   toggleP: v => { const s = ui.setup, k = s.sel.indexOf(v); if (k>=0) s.sel.splice(k,1); else { const g = GAMES[s.game], max = g.sizes ? Math.max(...g.sizes) : g.max; if (s.sel.length >= max){ toast(`${g.name} is ${g.needs.toLowerCase()}`); return; } s.sel.push(v); } haptic(); render({ keepScroll:true }); },
   editP: v => editPlayer(v), addP: () => editPlayer(null),
-  shuffle: () => { const s = ui.setup; for (let k=s.sel.length-1;k>0;k--){ const j = Math.floor(Math.random()*(k+1)); [s.sel[k],s.sel[j]] = [s.sel[j],s.sel[k]]; } haptic(); render({ keepScroll:true }); toast(s.game==="wolf" ? `${rosterBy(s.sel[0]).name} is the wolf first` : "Pairs shuffled"); },
+  addGuest: () => guestSheet(),
+  rmGuest: v => { const s = ui.setup; s.guests = s.guests.filter(g => g.id!==v); s.sel = s.sel.filter(x => x!==v); haptic(); render({ keepScroll:true }); },
+  shuffle: () => { const s = ui.setup; for (let k=s.sel.length-1;k>0;k--){ const j = Math.floor(Math.random()*(k+1)); [s.sel[k],s.sel[j]] = [s.sel[j],s.sel[k]]; } haptic(); render({ keepScroll:true }); toast(s.game==="wolf" ? `${setupPerson(s.sel[0]).name} is the wolf first` : "Pairs shuffled"); },
   club: v => { const [id,cl] = v.split("|"), s = ui.setup, list = s.clubs[id] = (s.clubs[id]||[]).slice(), k = list.indexOf(cl); if (k>=0) list.splice(k,1); else { if (list.length>=3){ toast("Three clubs only, plus the putter"); return; } list.push(cl); } haptic(); render({ keepScroll:true }); },
   pickCourse: () => pickCourse(c => { ui.setup.courseId = c.id; closeSheet(); render({ keepScroll:true }); }),
   mode: v => { ui.setup.holesMode = v; haptic(); render({ keepScroll:true }); },
@@ -1635,7 +1679,7 @@ const ACT = {
     try { await navigator.clipboard.writeText(text); toast("Copied, paste it in the chat"); } catch(e){ toast("Couldn’t share on this browser"); } },
   syncInfo: () => toast(SYNC_TEXT[shown] || SYNC_TEXT.live),
   who: () => askWho(),
-  myav: () => { haptic(); if (me && rosterBy(me)) avatarDesigner(me); else askWho(id => avatarDesigner(id)); }, players: () => openSheet(`<h3>Players</h3><p>Tap someone to change their name or handicap.</p>${roster().map(p=>`<button class="mi" data-pp="${p.id}"><span style="display:flex;align-items:center;gap:12px;text-align:left">${avatar(p,"av")}<span>${esc(p.name)}<small>${esc(quote(lineOf(p))) || "No catchline"}</small></span></span><span class="dim">Hcp ${+p.hcp||0}</span></button>`).join("")}<button class="btn line" id="padd" style="margin-top:14px">${ic("plus")}Add player</button>`,
+  myav: () => { haptic(); if (me && rosterBy(me)) avatarDesigner(me); else askWho(id => avatarDesigner(id)); }, players: () => openSheet(`<h3>Players</h3><p>Everyone owns their own profile and edits it from their phone. You can set up a mate who hasn’t opened the app yet.</p>${roster().map(p=>`<button class="mi" data-pp="${p.id}"><span style="display:flex;align-items:center;gap:12px;text-align:left">${avatar(p,"av")}<span>${esc(p.name)}<small>${p.id===me?"You":ownedByOther(p)?"Their profile":"Not claimed yet"}${lineOf(p)?`. ${esc(quote(lineOf(p)))}`:""}</small></span></span><span class="dim">Hcp ${+p.hcp||0}</span></button>`).join("")}<button class="btn line" id="padd" style="margin-top:14px">${ic("plus")}Add a mate without the app</button>`,
     sh => { sh.querySelectorAll("[data-pp]").forEach(b => b.onclick = () => editPlayer(b.dataset.pp)); sh.querySelector("#padd").onclick = () => editPlayer(null); }),
   courses: () => pickCourse(null, true), rulesAll: () => rulesSheet(),
   restart: () => holdSheet("Clear the scores?", `Wipes every hole saved in this ${GAMES[round.game].name} round on all phones. Players, course and options stay.`, "Hold to clear scores", restartRound),
