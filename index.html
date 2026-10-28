@@ -345,6 +345,34 @@ canvas#overlay{position:fixed;inset:0;width:100%;height:100%;z-index:65;pointer-
 .sw8[aria-pressed="true"]{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--lime)}
 .mi span small{display:block}
 
+/* stats and moments */
+.scard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:12px}
+.shead{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.shead>span:nth-child(2){flex:1;min-width:0}
+.shead b{display:block;font:700 15px var(--pixel)}
+.shead small{display:block;color:var(--stone);font-size:11.5px}
+.shead .avg{text-align:right}
+.shead .avg b{font:800 20px var(--mono);color:var(--lime)}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.tile{background:var(--card2);border-radius:8px;padding:9px 8px 8px;text-align:center}
+.tile b{display:block;font:800 18px var(--mono)}
+.tile span{display:block;font:700 8.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--stone);margin-top:2px}
+.tile.g b{color:#F2C94C} .tile.bad b{color:var(--accent)}
+.mhead{display:flex;gap:12px;align-items:center;margin:20px 0 10px}
+.mhead .mic{width:34px;height:31px;flex:none}
+.mhead h2{margin:0;font:700 18px var(--pixel)}
+.mhead p{margin:2px 0 0;color:var(--stone);font-size:12px}
+.mom{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;background:var(--card);border:1px solid var(--line);margin-bottom:6px}
+.mom .mic{width:20px;height:19px;flex:none}
+.mom .mt{flex:1;min-width:0}
+.mom .mt b{display:block;font-size:13px}
+.mom .mt b em{font-style:normal;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.mom .mt small{display:block;color:var(--stone);font-size:11px}
+.mom .mk{font:700 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;padding:4px 7px;border-radius:5px;background:rgba(242,201,76,.14);color:#F2C94C;white-space:nowrap}
+.mom.eagle,.mom.albatross,.mom.ace{border-color:rgba(242,201,76,.5);background:linear-gradient(90deg,rgba(242,201,76,.1),var(--card) 60%)}
+.mom.shitshow .mk{background:rgba(255,90,61,.14);color:var(--accent)}
+.lb li.worst{background:rgba(255,90,61,.12);border:1.5px solid var(--accent);border-radius:8px;margin:2px 0}
+
 </style>
 </head>
 <body>
@@ -598,6 +626,52 @@ function compute(r){
   }
 }
 
+
+/* ---------- golden moments, shit shows and player stats ---------- */
+function kindOf(g, par){
+  if (g==null) return null;
+  if (g===1) return "ace";
+  const d = g - par;
+  if (d<=-3) return "albatross"; if (d===-2) return "eagle"; if (d===-1) return "birdie";
+  if (g>=10) return "shitshow";
+  return null;
+}
+const KIND_LABEL = { ace:"Hole in one", albatross:"Albatross", eagle:"Eagle", birdie:"Birdie", shitshow:"Shit show" };
+function holeMoments(r, i){
+  const h = res(r,i), hole = r.holes[i], out = [];
+  if (!h) return out;
+  if (h.s) h.s.forEach((g,p) => { const k = kindOf(g, +hole.par); if (k) out.push({ kind:k, players:[p], g, par:+hole.par, n:hole.n, i }); });
+  if (h.t) sides(r).forEach((s,k2) => { const g = h.t[k2], k = kindOf(g, +hole.par); if (k) out.push({ kind:k, players:s, g, par:+hole.par, n:hole.n, i, team:true }); });
+  return out;
+}
+function allMoments(rounds){
+  const out = [];
+  rounds.forEach(r => r.holes.forEach((hole,i) => holeMoments(r,i).forEach(m => out.push({ ...m, roundId:r.id, game:r.game, course:r.courseName, at:r.createdAt||0,
+    ids:m.players.map(p=>r.players[p].id), names:m.players.map(p=>r.players[p].name), guest:m.players.some(p=>r.players[p].guest) }))));
+  return out.sort((a,b) => b.at-a.at || b.i-a.i);
+}
+function playerStats(rounds){
+  const S = {};
+  rounds.forEach(r => {
+    const per = {};
+    r.holes.forEach((hole,i) => { const h = res(r,i); if (!h || !h.s) return;
+      h.s.forEach((g,p) => { const pl = r.players[p]; if (!pl || pl.guest || g==null) return;
+        const par = +hole.par, d = g - par;
+        const o = per[pl.id] || (per[pl.id] = { holes:0, toPar:0 }); o.holes++; o.toPar += d;
+        const s = S[pl.id] || (S[pl.id] = { id:pl.id, name:pl.name, rounds:0, holes:0, strokes:0, toPar:0, pars:0, birdies:0, eagles:0, aces:0, bogeys:0, doubles:0, tens:0, best9:null, best18:null });
+        s.holes++; s.strokes += g; s.toPar += d;
+        if (g===1) s.aces++;
+        if (d===0) s.pars++; else if (d===-1) s.birdies++; else if (d<=-2) s.eagles++; else if (d===1) s.bogeys++; else if (d>=2) s.doubles++;
+        if (g>=10) s.tens++;
+      }); });
+    Object.keys(per).forEach(id => { const s = S[id]; s.rounds++;
+      if (per[id].holes===r.holes.length){ const key = r.holes.length>=18 ? "best18" : r.holes.length===9 ? "best9" : null;
+        if (key && (s[key]==null || per[id].toPar < s[key].toPar)) s[key] = { toPar:per[id].toPar, course:r.courseName, at:r.createdAt||0 }; } });
+  });
+  Object.values(S).forEach(s => { s.parsPerRound = s.rounds ? s.pars/s.rounds : 0; s.birdiesPerRound = s.rounds ? s.birdies/s.rounds : 0; s.avgToPar = s.holes ? s.toPar/s.holes : 0; });
+  return Object.values(S).sort((a,b) => b.holes-a.holes);
+}
+
 /* points or result a single hole would give, for live previews */
 function previewHole(r, i, h){
   const copy = { ...r, results: { ...r.results, [String(i)]: h } };
@@ -605,7 +679,7 @@ function previewHole(r, i, h){
   return c.perHole[i];
 }
 
-const ENGINE = { GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
+const ENGINE = { kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
 
 
 /* ===================== SYDNEY COURSES =====================
@@ -747,9 +821,16 @@ const ICON = {
   pen:["......##",".....###","....###.","...###..","..###...",".###....","##......","#......."],
   x:["##....##",".##..##.","..####..","...##...","..####..",".##..##.","##....##"],
   card:["##########","#........#","#.##.##.##","#........#","#.##.##.##","#........#","##########"],
-  info:["...##...","...##...","........","..###...","...##...","...##...","...##...","..####.."]
+  info:["...##...","...##...","........","..###...","...##...","...##...","...##...","..####.."],
+  star:[".....#.....",".....#.....","....###....","###########",".#########.","..#######..","...#####...","..###.###..",".##.....##.","#.........#"],
+  poo:[".....w.....","....ww.....","...wwww....","..wwwwww...",".wwwwwwww..","..wkwwkww..",".wwwwwwwww.","wwwmmmmmwww","wwwwwwwwwww",".wwwwwwwww."],
+  chart:["#..........","#.......##.","#.......##.","#....##.##.","#....##.##.","#.##.##.##.","#.##.##.##.","###########"]
 };
 const ic = (n, c="currentColor") => pxSVG(ICON[n], { "#":c, o:"#FF5A3D", w:"#F2F2EA" });
+const GOLD = "#F2C94C";
+const starIc = () => pxSVG(ICON.star, { "#":GOLD });
+const pooIc = () => pxSVG(ICON.poo, { w:"#8A5A34", k:"#F2F2EA", m:"#5A3A20" });
+const nth = n => n + (n%100>=11 && n%100<=13 ? "th" : ({1:"st",2:"nd",3:"rd"})[n%10] || "th");
 const GICON = { wolf:null, skins:"coins", match:"duo", stableford:"trophy", nassau:"clubs", bbb:"target", three:"bag", alt:"pair" };
 const gameIcon = (g, cls="px") => g==="wolf" ? wolfLime(cls) : pxSVG(ICON[GICON[g]], { "#":"#B7FF3B", o:"#FF5A3D", w:"#F2F2EA" }, cls);
 const gameIconBig = (g, cls="px") => g==="wolf" ? wolfFull(cls) : gameIcon(g, cls);
@@ -1189,13 +1270,18 @@ async function saveHole(){
   haptic();
   const before = ENGINE.compute(r).done;
   r.results[k] = res; delete drafts[k];
-  const msg = `${myName()} saved hole ${h.n}`;
+  const ms = ENGINE.holeMoments(r, i), who = m => m.players.map(p => r.players[p].name).join(" & ");
+  const gold = ms.filter(m => m.kind!=="shitshow"), shows = ms.filter(m => m.kind==="shitshow");
+  const momentText = gold.map(m => `${ENGINE.KIND_LABEL[m.kind]} for ${who(m)}!`).concat(shows.map(m => `${who(m)} took a ${m.g}. Shit show.`)).join(" ");
+  const msg = `${myName()} saved hole ${h.n}${momentText?". "+momentText:""}`;
   r.updatedAt = Date.now();
   store.saveRound(r.id, { results:{ [k]:res }, updatedAt:r.updatedAt, lastBy:device, lastMsg:msg });
   const s = $("#save"); s.innerHTML = ic("tick");
   const ph = ENGINE.compute(r).perHole[i];
   ph.pts.forEach((v,p) => { if (!v || r.game==="three") return; const el = $(`.srow[data-p="${p}"] .sv`) || $(`.strip>div:nth-child(${p+1})`); if (!el) return; flyText((r.game==="match"||r.game==="nassau"||r.game==="alt")?"W":"+"+v, el); });
-  toast(`Hole ${h.n} saved`, { label:"Undo", fn:() => { if (prev) r.results[k] = prev; else delete r.results[k]; drafts[k] = clone(res);
+  const big = gold.find(m => m.kind!=="birdie");
+  if (big) takeover(ENGINE.KIND_LABEL[big.kind], `${who(big)}, ${big.g} on the par ${big.par} ${nth(big.n)}. Straight into Golden Moments.`, pxSVG(ICON.star, { "#":GOLD }, "px big"));
+  toast(`Hole ${h.n} saved${momentText?". "+momentText:""}`, { label:"Undo", fn:() => { if (prev) r.results[k] = prev; else delete r.results[k]; drafts[k] = clone(res);
     store.saveRound(r.id, { results:{ [k]: prev || DEL }, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} undid hole ${h.n}` }); ui.view = i; render({ quiet:true }); } });
   await wait(850);
   if (!live() || ui.tab!=="play") return;
@@ -1213,8 +1299,10 @@ const bump = el => anim(el, [{ transform:"scale(1.4)" }, { transform:"scale(1)" 
 
 /* ---------- board ---------- */
 function renderBoard(){
-  const tabs = `<div class="tabs"><button data-a="btab" data-v="round" aria-selected="${ui.boardTab==="round"}">Current round</button><button data-a="btab" data-v="all" aria-selected="${ui.boardTab==="all"}">All games</button></div>`;
+  const tabs = `<div class="tabs">${[["round","Round"],["all","All games"],["stats","Stats"],["moments","Moments"]].map(([v,l]) => `<button data-a="btab" data-v="${v}" aria-selected="${ui.boardTab===v}">${l}</button>`).join("")}</div>`;
   if (ui.boardTab==="all") { $("#screen").innerHTML = tabs + allGames(); return; }
+  if (ui.boardTab==="stats") { $("#screen").innerHTML = tabs + statsView(); return; }
+  if (ui.boardTab==="moments") { $("#screen").innerHTML = tabs + momentsView(); $$(".mom").forEach((el,k) => anim(el, [{ transform:"translateY(10px)", opacity:0 }, { transform:"none", opacity:1 }], { duration:320, delay:Math.min(k,10)*40, easing:"cubic-bezier(.2,.8,.2,1)", fill:"backwards" })); return; }
   const r = live() ? round : (round && round.status==="done") ? round : history.find(x => x.status==="done");
   if (!r){ $("#screen").innerHTML = tabs + `<div class="status">No rounds yet. Start a game from Home and the table fills in as you play.</div>`; return; }
   const c = ENGINE.compute(r), team = ENGINE.isTeamGame(r);
@@ -1241,6 +1329,38 @@ function allGames(){
   return `<div class="lbh" style="grid-template-columns:1fr auto auto auto;gap:10px"><span>Player</span><span>Wins</span><span>Played</span><span>Win %</span></div>
   ${rows.map((s,k) => `<div class="stat" ${k===0?'style="color:var(--lime)"':""}><span class="who">${avatar(s.p,"av sm")}${esc(s.name)}</span><em>${s.wins}</em><em class="dim">${s.played}</em><em>${Math.round(s.wins/s.played*100)}%</em></div>`).join("")}
   <div class="cap sect">Every round</div>${done.slice(0,30).map(histRow).join("")}`;
+}
+function playedRounds(){
+  const list = history.slice();
+  if (round){ const k = list.findIndex(x => x.id===round.id); if (k>=0) list[k] = round; else list.unshift(round); }
+  return list.filter(r => r && r.holes && ENGINE.played(r) > 0);
+}
+const fmtPar = v => v===0 ? "E" : v>0 ? "+"+v : String(v);
+const fmtDate = t => new Date(t||0).toLocaleDateString("en-AU", { day:"numeric", month:"short" });
+const personFor = (id, name) => rosterBy(id) || { id, name };
+function statsView(){
+  const st = ENGINE.playerStats(playedRounds());
+  if (!st.length) return `<div class="status">Stats build up from every hole you save. Play a few holes and they’ll appear here.</div>`;
+  const tile = (v,l,cls="") => `<div class="tile ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  return `<p class="sub" style="margin:14px 0 4px">Every hole from every game you’ve scored, guests left out.</p>` + st.map(s => {
+    const p = personFor(s.id, s.name);
+    return `<div class="scard"><div class="shead">${avatar(p,"av")}<span><b>${esc(p.name)}</b><small>${s.rounds} round${s.rounds===1?"":"s"}, ${s.holes} holes</small></span><span class="avg"><b>${fmtPar(Math.round(s.avgToPar*18))}</b><small>per 18</small></span></div>
+    <div class="tiles">${tile(s.pars,"Pars")}${tile(s.birdies,"Birdies","g")}${tile(s.eagles,"Eagles+","g")}${s.aces?tile(s.aces,"Holes in one","g"):""}${tile(s.bogeys,"Bogeys")}${tile(s.doubles,"Doubles+")}${tile(s.tens,"10 or worse","bad")}
+    ${tile(s.parsPerRound.toFixed(1),"Pars a round")}${tile(s.birdiesPerRound.toFixed(1),"Birdies a round")}${tile((s.avgToPar>=0?"+":"")+s.avgToPar.toFixed(2),"Avg to par a hole")}
+    ${tile(s.best9?fmtPar(s.best9.toPar):"–","Best 9")}${tile(s.best18?fmtPar(s.best18.toPar):"–","Best 18")}</div></div>`; }).join("");
+}
+function momentsView(){
+  const all = ENGINE.allMoments(playedRounds()), gold = all.filter(m => m.kind!=="shitshow"), shows = all.filter(m => m.kind==="shitshow");
+  const row = m => { const p = m.players.length>1 ? null : personFor(m.ids[0], m.names[0]);
+    return `<div class="mom ${m.kind}"><span class="mic">${m.kind==="shitshow"?pooIc():starIc()}</span>${p?avatar(p,"av sm"):""}<span class="mt"><b>${esc(m.names.join(" & "))}${m.guest?` <em>guest</em>`:""}</b><small>${m.g} on the par ${m.par} ${nth(m.n)}, ${esc(m.course)}, ${fmtDate(m.at)}</small></span><span class="mk">${esc(ENGINE.KIND_LABEL[m.kind])}</span></div>`; };
+  const board = {};
+  shows.forEach(m => { if (m.guest || m.team) return; const id = m.ids[0], b = board[id] || (board[id] = { id, name:m.names[0], count:0, worst:m }); b.count++; if (m.g > b.worst.g) b.worst = m; });
+  const ranked = Object.values(board).sort((a,b) => b.count-a.count || b.worst.g-a.worst.g);
+  return `<div class="mhead"><span class="mic">${starIc()}</span><div><h2>Golden moments</h2><p>Every birdie or better. ${gold.length} so far.</p></div></div>
+  ${gold.length ? gold.slice(0,40).map(row).join("") : `<div class="status">No birdies yet. The first one goes straight up here.</div>`}
+  <div class="mhead" style="margin-top:30px"><span class="mic">${pooIc()}</span><div><h2>The Shit Show</h2><p>Every 10 or worse on a hole. ${shows.length} so far.</p></div></div>
+  ${ranked.length ? `<div class="lbh" style="grid-template-columns:34px 1fr auto"><span>Pos</span><span>Player</span><span>10+ holes</span></div><ul class="lb">${ranked.map((b,k) => `<li class="${k===0?"worst":""}"><span class="n">${k+1}</span><span class="who">${avatar(personFor(b.id,b.name),"av sm")}<span style="min-width:0"><b>${esc(personFor(b.id,b.name).name)}</b><small>Worst: ${b.worst.g} on the ${nth(b.worst.n)} at ${esc(b.worst.course)}</small></span></span><span class="v">${b.count}</span></li>`).join("")}</ul>` : ""}
+  ${shows.length ? `<div class="cap sect">Every shit show</div>${shows.slice(0,30).map(row).join("")}` : `<div class="status">Clean so far. Nobody’s taken a 10. Yet.</div>`}`;
 }
 function shareText(r){
   const c = ENGINE.compute(r);
@@ -1635,15 +1755,15 @@ function intro(){
   const el = $("#intro"), first = !localStorage.getItem(LSK.me) && localStorage.getItem(LSK.me)!=="";
   const firstTime = localStorage.getItem(LSK.me)===null;
   el.innerHTML = `<canvas class="px" id="introCv"></canvas><div class="brand"><div class="logo">${wolfFull("px logo")}</div>${wordSVG("GOLF GAMES")}<div class="cap tagl">Play / Compete / Good times</div></div>
-    ${firstTime ? `<div class="acts"><button class="btn go" id="go">Play</button><button class="btn line" id="watch">Just watching</button></div>` : ""}`;
+    <div class="acts"><button class="btn go" id="go">Play</button>${firstTime ? `<button class="btn line" id="watch">Just watching</button>` : ""}</div>`;
   scene($("#introCv"), { w:160, h:100, seed:7, anim:true });
   if (!RM){ $$("#intro .logo rect").forEach(r => { const y = +r.getAttribute("y"); r.animate([{ opacity:0 }, { opacity:1 }], { duration:60, delay:100+y*26, fill:"backwards" }); });
     anim($("#intro .word"), [{ clipPath:"inset(-20% 100% -20% -10%)" }, { clipPath:"inset(-20% -10% -20% -10%)" }], { duration:520, delay:800, easing:"steps(14,end)", fill:"backwards" });
     anim($("#intro .tagl"), [{ opacity:0, letterSpacing:".6em" }, { opacity:1, letterSpacing:".28em" }], { duration:600, delay:1200, easing:"cubic-bezier(.2,.8,.2,1)", fill:"backwards" });
-    if (firstTime) $$("#intro .acts .btn").forEach((b,k) => anim(b, [{ opacity:0, transform:"translateY(16px)" }, { opacity:1, transform:"none" }], { duration:450, delay:1350+k*100, easing:"cubic-bezier(.2,.8,.2,1)", fill:"backwards" })); }
+    $$("#intro .acts .btn").forEach((b,k) => anim(b, [{ opacity:0, transform:"translateY(16px)" }, { opacity:1, transform:"none" }], { duration:450, delay:1350+k*100, easing:"cubic-bezier(.2,.8,.2,1)", fill:"backwards" })); }
   const close = () => { el.classList.add("out"); setTimeout(() => el.remove(), 550); };
   if (firstTime){ $("#go").onclick = () => { haptic(); close(); setTimeout(() => askWho(id => avatarDesigner(id)), 350); }; $("#watch").onclick = () => { haptic(); me = null; localStorage.setItem(LSK.me, ""); close(); }; }
-  else setTimeout(close, RM ? 200 : 2100);
+  else $("#go").onclick = () => { haptic(); close(); };
 }
 
 /* ---------- actions ---------- */
