@@ -47,7 +47,7 @@ svg.px,canvas.px{shape-rendering:crispEdges;image-rendering:pixelated;display:bl
 .ib.logo svg{width:30px;height:29px}
 .top .r{justify-self:end}
 .dot{width:9px;height:9px;background:var(--stone)}
-.dot.live{background:var(--lime);animation:blink 2.4s steps(2) infinite}
+.dot.live{background:var(--lime)}
 .dot.pending{background:var(--bone)} .dot.offline,.dot.local{background:var(--accent)}
 @keyframes blink{50%{opacity:.35}}
 main{max-width:540px;margin:0 auto;padding:0 16px 230px;min-height:100vh}
@@ -855,7 +855,14 @@ function toast(msg, action){
   if (action) t.querySelector("button").onclick = () => { t.classList.remove("on"); action.fn(); };
   t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), action ? 4500 : 2400);
 }
-function setSync(s){ sync = s; const d = $("#syncdot"); if (d) { d.className = "dot "+s; d.title = { live:"Live", pending:"Saving", offline:"No signal, will sync", local:"Only on this phone" }[s] || s; } }
+/* the light only changes when a state lasts: saving after 1.5s, no signal after 4s, so it never flickers */
+let shown = "local", syncT = null;
+function setSync(s){
+  if (s===sync) return; sync = s; clearTimeout(syncT);
+  const show = v => { if (v===shown) return; shown = v; const d = $("#syncdot"); if (d) d.className = "dot "+v; };
+  if (s==="live" || s==="local") show(s); else syncT = setTimeout(() => show(s), s==="offline" ? 4000 : 1500);
+}
+const SYNC_TEXT = { live:"Live. Every phone sees the same card.", pending:"Saving your last change.", offline:"No signal. Scores are safe on this phone and will sync when you’re back in range.", local:"Saving on this phone only." };
 
 /* ---------- chrome ---------- */
 const NAV = [["home","Home"],["play","Hole"],["board","Board"],["menu","Menu"]];
@@ -863,7 +870,7 @@ function renderNav(){
   $("#nav").innerHTML = NAV.map(([t,l]) => `<button role="tab" data-a="tab" data-v="${t}" aria-selected="${ui.tab===t && !ui.sub}" class="${t==="play"&&!live()?"off":""}">${t==="home"?wolfLime():t==="play"?ic("flag"):t==="board"?ic("trophy"):ic("menu")}${l}</button>`).join("");
 }
 function renderTop(){
-  const dot = `<span class="dot ${sync}" id="syncdot"></span>`;
+  const dot = `<span class="dot ${shown}" id="syncdot"></span>`;
   let L = `<span class="ib logo">${wolfFull()}</span>`, mid = "";
   if (ui.sub) L = `<button class="ib" data-a="back" aria-label="Back">${ic("back")}</button>`;
   if (ui.sub && ui.sub.type==="setup") mid = `<b>New game</b>`;
@@ -871,11 +878,11 @@ function renderTop(){
   else if (ui.tab==="play" && live()) { const h = round.holes[ui.view]; L = `<button class="ib" data-a="tab" data-v="home" aria-label="Home">${ic("back")}</button>`; mid = `<b>Hole ${h.n}</b><span>Par ${h.par} | Index ${h.si}</span>`; }
   else if (ui.tab==="board") mid = `<b>Leaderboard</b>`;
   else if (ui.tab==="menu") mid = `<b>Menu</b>`;
-  $("#top").innerHTML = `${L}<div class="mid">${mid}</div><div class="r ib">${dot}</div>`;
-  setSync(sync);
+  $("#top").innerHTML = `${L}<div class="mid">${mid}</div><button class="r ib" data-a="syncInfo" aria-label="Connection status">${dot}</button>`;
 }
+let renders = 0;
 function render(opts={}){
-  renderNav(); renderTop();
+  renders++; renderNav(); renderTop();
   const inPlay = ui.tab==="play" && !ui.sub && live();
   if (inPlay && (ui.view==null || ui.view >= round.holes.length)) ui.view = nextHole();
   $("#dock").classList.toggle("away", !inPlay);
@@ -1342,6 +1349,7 @@ function onRound(d){
   softRender();
 }
 function onMeta(d, m){
+  if (d && meta && stable({ ...DEFAULT_META(), ...d })===stable(meta)) return;
   if (!d){ if (store.kind==="local" || (m && !m.fromCache)) { meta = DEFAULT_META(); store.saveMeta(meta, true); } return; }
   const prevActive = meta && meta.active;
   meta = { ...DEFAULT_META(), ...d };
@@ -1349,7 +1357,7 @@ function onMeta(d, m){
   if (prevActive && !meta.active && ui.tab==="play") ui.tab = "home";
   softRender();
 }
-function onHistory(list){ history = (list||[]).filter(r => r && r.holes && r.players && GAMES[r.game]); if (ui.tab==="home" || ui.tab==="board") softRender(); }
+function onHistory(list){ const h = (list||[]).filter(r => r && r.holes && r.players && GAMES[r.game]); if (stable(h)===stable(history)) return; history = h; if (ui.tab==="home" || ui.tab==="board") softRender(); }
 function softRender(){
   if (!meta) return;
   const a = document.activeElement;
@@ -1512,6 +1520,7 @@ const ACT = {
   share: async () => { haptic(); const r = live() ? round : (round && round.status==="done") ? round : history.find(x => x.status==="done"); if (!r) return; const text = shareText(r);
     try { if (navigator.share){ await navigator.share({ text }); return; } } catch(e){ if (e && e.name==="AbortError") return; }
     try { await navigator.clipboard.writeText(text); toast("Copied, paste it in the chat"); } catch(e){ toast("Couldn’t share on this browser"); } },
+  syncInfo: () => toast(SYNC_TEXT[shown] || SYNC_TEXT.live),
   who: () => askWho(), players: () => openSheet(`<h3>Players</h3><p>Tap someone to change their name or handicap.</p>${roster().map(p=>`<button class="mi" data-pp="${p.id}"><span style="display:flex;align-items:center;gap:12px">${avatar(p,"av sm")}${esc(p.name)}</span><span class="dim">Hcp ${+p.hcp||0}</span></button>`).join("")}<button class="btn line" id="padd" style="margin-top:14px">${ic("plus")}Add player</button>`,
     sh => { sh.querySelectorAll("[data-pp]").forEach(b => b.onclick = () => editPlayer(b.dataset.pp)); sh.querySelector("#padd").onclick = () => editPlayer(null); }),
   courses: () => pickCourse(null, true), rulesAll: () => rulesSheet(),
@@ -1545,11 +1554,11 @@ async function boot(){
   const cloud = firebaseConfig.projectId && firebaseConfig.projectId!=="PASTE_HERE" && !window.__GG_LOCAL;
   if (cloud){ try { store = await CloudStore(firebaseConfig); } catch(e){ console.error(e); store = null; } }
   if (!store){ store = LocalStore(); if (cloud) toast("Offline. Scores save on this phone for now."); }
-  store.onStatus(setSync); setSync(store.kind==="local" ? "local" : "offline");
+  store.onStatus(setSync); if (store.kind!=="local") setSync("pending");
   store.watchMeta(onMeta); store.watchHistory(onHistory);
 }
 boot();
-window.__gg = { get state(){ return { meta, round, history, ui, drafts, me, store: store && store.kind }; }, ENGINE };
+window.__gg = { test:{ onMeta:(d,m)=>onMeta(d,m), onHistory:l=>onHistory(l), onRound:d=>onRound(d), setSync:s=>setSync(s), get renders(){ return renders; }, get shown(){ return shown; } }, get state(){ return { meta, round, history, ui, drafts, me, store: store && store.kind }; }, ENGINE };
 
 </script>
 </body>
