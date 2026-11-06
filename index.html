@@ -826,10 +826,14 @@ function snakeState(r){
 const roundComplete = r => r.status==="done" || (r.holes.length>0 && played(r)===r.holes.length);
 
 /* ---------- the Masters: a season league over finishing positions ---------- */
+/* guests never stop a round counting: the crew rule looks at everyone who isn't a guest */
+const crewOk = (r, set) => { const real = r.players.filter(p => !p.guest); return real.length>=3 && real.every(p => set.has(p.id)); };
+/* a round is off the table only if someone switched it off. Older rounds with a guest were marked off automatically, so that mark is ignored */
+const switchedOff = r => !!(r.settings && r.settings.noMasters) || (r.league===false && r.players.every(p => !p.guest));
 function leagueRounds(rounds, members, start){
   const set = new Set(members);
-  return rounds.filter(r => r && r.game==="wolf" && r.league!==false && (r.createdAt||0) >= (start||0) && (r.manual || roundComplete(r))
-    && r.players.length>=3 && r.players.every(p => set.has(p.id))).sort((a,b) => (a.createdAt||0)-(b.createdAt||0));
+  return rounds.filter(r => r && r.game==="wolf" && !switchedOff(r) && (r.createdAt||0) >= (start||0) && (r.manual || roundComplete(r))
+    && crewOk(r, set)).sort((a,b) => (a.createdAt||0)-(b.createdAt||0));
 }
 function leagueTable(rounds, members, opts){
   const pts = (opts && opts.points) || [10,6,3,1], best = (opts && opts.best) || 0;
@@ -838,7 +842,8 @@ function leagueTable(rounds, members, opts){
   const weeks = list.map(r => {
     let c, pos;
     if (r.manual){ pos = {}; r.players.forEach((p,i) => pos[i] = +r.manual.pos[p.id] || r.players.length); c = { rows:r.players.map((p,i) => ({ players:[i], value:+((r.manual.pts||{})[p.id])||0 })) }; }
-    else { c = compute(r); pos = positions(r, c); }
+    else { c = compute(r); const full = positions(r, c), crew = r.players.map((p,i) => i).filter(i => !r.players[i].guest).sort((a,b) => full[a]-full[b]);
+      pos = {}; crew.forEach((i,k) => { pos[i] = (k>0 && full[i]===full[crew[k-1]]) ? pos[crew[k-1]] : k+1; }); }
     const byPos = {};
     Object.entries(pos).forEach(([p,k]) => (byPos[k] = byPos[k]||[]).push(+p));
     const res = {};
@@ -860,11 +865,11 @@ function leagueTable(rounds, members, opts){
 function leagueMisses(rounds, members, start){ // recent Wolf rounds that did not make the table, and why
   const set = new Set(members), out = [];
   rounds.filter(r => r && r.game==="wolf" && !r.manual).sort((a,b) => (b.createdAt||0)-(a.createdAt||0)).slice(0,12).forEach(r => {
-    const ids = r.players.map(p => p.id), outsiders = r.players.filter(p => !set.has(p.id));
+    const outsiders = r.players.filter(p => !p.guest && !set.has(p.id)), real = r.players.filter(p => !p.guest);
     let reason = null, fix = null;
-    if (outsiders.length) { reason = `${outsiders.map(p => p.name + (p.guest ? " (guest)" : "")).join(", ")} ${outsiders.length>1?"aren’t":"isn’t"} in the crew`; fix = outsiders.some(p => !p.guest) ? "crew" : null; }
-    else if (r.players.length<3) reason = "Needs at least three of the crew";
-    else if (r.league===false) { reason = "“Counts for the Masters” was switched off"; fix = "count"; }
+    if (outsiders.length) { reason = `${outsiders.map(p => p.name).join(", ")} ${outsiders.length>1?"aren’t":"isn’t"} in the crew`; fix = "crew"; }
+    else if (real.length<3) reason = "Needs at least three of the crew";
+    else if (switchedOff(r)) { reason = "“Counts for the Masters” was switched off"; fix = "count"; }
     else if ((r.createdAt||0) < (start||0)) reason = "Played before the season start date";
     else if (!roundComplete(r)) { reason = `Not finished, ${played(r)} of ${r.holes.length} holes saved`; fix = r.status==="live" ? "resume" : "finish"; }
     if (reason) out.push({ id:r.id, at:r.createdAt||0, course:r.courseName, holes:r.holes.length, played:played(r), reason, fix, outsiders:outsiders.filter(p=>!p.guest).map(p=>p.id), players:r.players.map(p=>p.name) });
@@ -926,7 +931,7 @@ function previewHole(r, i, h){
   return c.perHole[i];
 }
 
-const ENGINE = { leagueMisses, JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
+const ENGINE = { crewOk, switchedOff, leagueMisses, JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
 
 
 /* ===================== SYDNEY COURSES =====================
@@ -1427,7 +1432,7 @@ function renderSetup(){
   <div class="seg">${modes.map(([v,l]) => `<button data-a="mode" data-v="${v}" aria-pressed="${s.holesMode===v}">${l}</button>`).join("")}</div>
   <div class="lab">Options</div>
   <label class="opt"><span>Use handicaps<small>Shots given on the hardest holes first</small></span><input type="checkbox" class="sw" data-a="hcp" ${s.useHcp?"checked":""}></label>
-  ${crewMatch(s.sel) && s.game==="wolf" ? `<label class="opt"><span>Counts for the ${esc(leagueCfg().name)}<small>All ${esc(crewCfg().name)}, so it goes on the season table</small></span><input type="checkbox" class="sw" data-a="league" ${s.league!==false?"checked":""}></label>` : ""}
+  ${crewMatch(s.sel) && s.game==="wolf" ? `<label class="opt"><span>Counts for the ${esc(leagueCfg().name)}<small>${s.sel.some(id=>String(id).startsWith("guest-"))?"Guests play for fun and stay off the table":`All ${esc(crewCfg().name)}, so it goes on the season table`}</small></span><input type="checkbox" class="sw" data-a="league" ${s.league!==false?"checked":""}></label>` : ""}
   ${OPTS[s.game].map(([k,l,sub,isBool]) => isBool
     ? `<label class="opt"><span>${l}<small>${sub}</small></span><input type="checkbox" class="sw" data-a="optB" data-v="${k}" ${s.settings[k]?"checked":""}></label>`
     : `<div class="opt"><span>${l}<small>${sub}</small></span><div class="num"><button data-a="optN" data-v="${k}|-1" aria-label="Less">${ic("minus")}</button><output>${MONEY_KEYS[k]?"$":""}${+s.settings[k]}</output><button data-a="optN" data-v="${k}|1" aria-label="More">${ic("plus")}</button></div></div>`).join("")}`;
@@ -1660,7 +1665,7 @@ function statsView(){
   + `<div class="cap sect">Every round</div>${rounds.filter(r=>ENGINE.roundComplete(r)).slice(0,40).map(histRow).join("") || `<div class="status">Finished rounds land here.</div>`}`;
 }
 function momentsView(){
-  const all = ENGINE.allMoments(scopedRounds()), gold = all.filter(m => m.kind!=="shitshow"), shows = all.filter(m => m.kind==="shitshow");
+  const all = ENGINE.allMoments(scopedRounds()).filter(m => ui.scope!=="crew" || !m.guest), gold = all.filter(m => m.kind!=="shitshow"), shows = all.filter(m => m.kind==="shitshow");
   const row = m => { const p = m.players.length>1 ? null : personFor(m.ids[0], m.names[0]);
     return `<div class="mom ${m.kind}"><span class="mic">${m.kind==="shitshow"?pooIc():starIc()}</span>${p?avatar(p,"av sm"):""}<span class="mt"><b>${esc(m.names.join(" & "))}${m.guest?` <em>guest</em>`:""}</b><small>${m.g} on the par ${m.par} ${nth(m.n)}, ${esc(m.course)}, ${fmtDate(m.at)}</small></span><span class="mk">${esc(ENGINE.KIND_LABEL[m.kind])}</span>${reactBar(m)}</div>`; };
   const board = {};
@@ -1675,8 +1680,8 @@ function momentsView(){
 /* ---------- crew, Masters, rivals, side games, reactions ---------- */
 const crewCfg = () => ({ ...DEFAULT_CREW(), ...((meta && meta.crew) || {}) });
 const leagueCfg = () => ({ ...DEFAULT_LEAGUE(), ...((meta && meta.league) || {}) });
-const crewMatch = ids => { const m = new Set(crewCfg().members); return ids.length>=3 && ids.every(id => m.has(id)); };
-const inCrew = r => crewMatch(r.players.map(p => p.id));
+const crewMatch = ids => { const m = new Set(crewCfg().members), real = ids.filter(id => !String(id).startsWith("guest-")); return real.length>=3 && real.every(id => m.has(id)); };
+const inCrew = r => ENGINE.crewOk(r, new Set(crewCfg().members));
 function scopedRounds(){ const all = playedRounds(); return ui.scope==="crew" ? all.filter(inCrew) : all; }
 function scopeSwitch(){ return `<div class="seg scope"><button data-a="scope" data-v="all" aria-pressed="${ui.scope!=="crew"}">Everyone</button><button data-a="scope" data-v="crew" aria-pressed="${ui.scope==="crew"}">${esc(crewCfg().name)}</button></div>`; }
 function leagueNow(){ const L = leagueCfg(); return ENGINE.leagueTable(playedRounds().concat(history.filter(r => r.manual)), crewCfg().members, { points:L.points, best:L.best, start:L.start||0 }); }
@@ -1720,7 +1725,7 @@ function fixMiss(v){
   }
   const partial = fix==="finish" && !ENGINE.roundComplete(r);
   holdSheet("Count this round?", partial ? `Only ${ENGINE.played(r)} of ${r.holes.length} holes were saved. It will count on the ${leagueCfg().name} using the holes you saved.` : `It will go on the ${leagueCfg().name} table.`, "Hold to count it", () => {
-    const winners = ENGINE.compute(r).winners.map(p => r.players[p].id), patch = { league:true, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} added a round to the Masters` };
+    const winners = ENGINE.compute(r).winners.map(p => r.players[p].id), patch = { league:true, settings:{ ...(r.settings||{}), noMasters:false }, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} added a round to the Masters` };
     if (partial) { patch.status = "done"; patch.winners = winners; }
     store.saveRound(r.id, patch); Object.assign(r, patch); const h = history.find(x => x.id===r.id); if (h) Object.assign(h, patch);
     closeSheet(); toast("Round added to the Masters"); render({ keepScroll:true });
@@ -2080,7 +2085,7 @@ function startGame(){
   const go2 = () => {
     const players = s.sel.map(id => { const p = setupPerson(id); const o = { id:p.id, name:p.name, hcp:+p.hcp||0 }; if (p.guest) o.guest = true; if (p.av) o.av = { ...p.av }; if (p.line) o.line = p.line; if (s.game==="three") o.clubs = (s.clubs[id]||[]).slice(); return o; });
     const id = newId(), now = Date.now();
-    const r = { league: s.league!==false, id, game:s.game, courseId:c.id, courseName:c.name, holesMode:s.holesMode, holes, players, settings:{ ...s.settings }, useHcp:!!s.useHcp, results:{}, status:"live", createdAt:now, updatedAt:now, lastBy:device, lastMsg:`${myName()} started ${GAMES[s.game].name}`, winners:[] };
+    const r = { league: s.league!==false, id, game:s.game, courseId:c.id, courseName:c.name, holesMode:s.holesMode, holes, players, settings:{ ...s.settings, noMasters: s.game==="wolf" && crewMatch(s.sel) && s.league===false }, useHcp:!!s.useHcp, results:{}, status:"live", createdAt:now, updatedAt:now, lastBy:device, lastMsg:`${myName()} started ${GAMES[s.game].name}`, winners:[] };
     if (live()) store.saveRound(round.id, { status:"ended", updatedAt:now });
     store.saveRound(id, r, true);
     meta.active = id; meta.lastCourse = c.id; store.saveMeta({ active:id, lastCourse:c.id });
