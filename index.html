@@ -46,7 +46,7 @@ svg.px,canvas.px{shape-rendering:crispEdges;image-rendering:pixelated;display:bl
 .ib svg{width:20px;height:20px}
 .ib.logo svg{width:30px;height:29px}
 .top .r{justify-self:end}
-.dot{width:9px;height:9px;background:var(--stone)}
+.dot{display:block;width:9px;height:9px;background:var(--stone)}
 .dot.live{background:var(--lime)}
 .dot.pending{background:var(--bone)} .dot.offline,.dot.local{background:var(--accent)}
 @keyframes blink{50%{opacity:.35}}
@@ -92,11 +92,11 @@ main{max-width:540px;margin:0 auto;padding:0 16px 230px;min-height:100vh}
 .hero::after{content:"";position:absolute;inset:auto 0 0;height:60px;background:linear-gradient(transparent,var(--midnight))}
 .hero .say{position:absolute;left:18px;top:16px;z-index:2;font:700 11px/1.7 var(--mono);letter-spacing:.3em;text-transform:uppercase;color:var(--bone);text-shadow:0 1px 0 #000}
 .hero .say i{display:block;width:22px;height:3px;background:var(--lime);margin-top:8px}
-.live{display:flex;align-items:center;gap:12px;width:100%;padding:14px;border-radius:12px;border:1.5px solid var(--lime);background:rgba(183,255,59,.08);margin:6px 0 4px}
-.live .ic{width:38px;height:38px;flex:none}
-.live b{display:block;font:700 14px var(--pixel)}
-.live small{display:block;color:var(--stone);font-size:12px}
-.live .go{margin-left:auto;width:16px;height:16px}
+.livecard{display:flex;align-items:center;gap:12px;width:100%;padding:14px;border-radius:12px;border:1.5px solid var(--lime);background:rgba(183,255,59,.08);margin:6px 0 4px}
+.livecard .ic{width:38px;height:38px;flex:none}
+.livecard b{display:block;font:700 14px var(--pixel)}
+.livecard small{display:block;color:var(--stone);font-size:12px}
+.livecard .go{margin-left:auto;width:16px;height:16px}
 .glist{margin:14px 0 0;border-top:1px solid var(--line)}
 .grow{display:flex;align-items:center;gap:14px;width:100%;height:56px;padding:0 12px;border-bottom:1px solid var(--line);font:700 13px var(--mono);letter-spacing:.12em;text-transform:uppercase;transition:background .15s,transform .2s var(--spring)}
 .grow .ic{width:24px;height:24px;flex:none}
@@ -421,6 +421,13 @@ canvas#overlay{position:fixed;inset:0;width:100%;height:100%;z-index:65;pointer-
 .reacts button{height:64px;border-radius:12px;background:var(--card2);font-size:30px;text-align:center}
 .reacts button[aria-pressed="true"]{box-shadow:inset 0 0 0 2px var(--lime)}
 .recap{width:100%;border-radius:10px;display:block;image-rendering:pixelated}
+
+.miss{display:flex;align-items:center;gap:10px;padding:12px;border-radius:10px;background:var(--card);border:1px solid var(--line);margin-bottom:6px}
+.miss span{flex:1;min-width:0}
+.miss b{display:block;font-size:13px}
+.miss small{display:block;color:var(--stone);font-size:11.5px}
+.miss em{display:block;font-style:normal;font-size:12px;color:var(--accent);margin-top:3px}
+.miss .chip{height:34px;flex:none}
 
 </style>
 </head>
@@ -850,6 +857,21 @@ function leagueTable(rounds, members, opts){
   return { rows, weeks, leader, rounds:list.length, start:list.length?list[0].createdAt:null };
 }
 
+function leagueMisses(rounds, members, start){ // recent Wolf rounds that did not make the table, and why
+  const set = new Set(members), out = [];
+  rounds.filter(r => r && r.game==="wolf" && !r.manual).sort((a,b) => (b.createdAt||0)-(a.createdAt||0)).slice(0,12).forEach(r => {
+    const ids = r.players.map(p => p.id), outsiders = r.players.filter(p => !set.has(p.id));
+    let reason = null, fix = null;
+    if (outsiders.length) { reason = `${outsiders.map(p => p.name + (p.guest ? " (guest)" : "")).join(", ")} ${outsiders.length>1?"aren’t":"isn’t"} in the crew`; fix = outsiders.some(p => !p.guest) ? "crew" : null; }
+    else if (r.players.length<3) reason = "Needs at least three of the crew";
+    else if (r.league===false) { reason = "“Counts for the Masters” was switched off"; fix = "count"; }
+    else if ((r.createdAt||0) < (start||0)) reason = "Played before the season start date";
+    else if (!roundComplete(r)) { reason = `Not finished, ${played(r)} of ${r.holes.length} holes saved`; fix = r.status==="live" ? "resume" : "finish"; }
+    if (reason) out.push({ id:r.id, at:r.createdAt||0, course:r.courseName, holes:r.holes.length, played:played(r), reason, fix, outsiders:outsiders.filter(p=>!p.guest).map(p=>p.id), players:r.players.map(p=>p.name) });
+  });
+  return out;
+}
+
 /* ---------- head to head ---------- */
 function headToHead(rounds, me){
   const H = {};
@@ -904,7 +926,7 @@ function previewHole(r, i, h){
   return c.perHole[i];
 }
 
-const ENGINE = { JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
+const ENGINE = { leagueMisses, JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
 
 
 /* ===================== SYDNEY COURSES =====================
@@ -1309,7 +1331,7 @@ function renderHome(){
   const done = history.filter(r => r.status==="done").slice(0,5);
   $("#screen").innerHTML = `
   <div class="hero"><canvas class="px" id="heroCv"></canvas><div class="say">Same course.<br>Different games.<i></i></div></div>
-  ${lv ? `<button class="live" data-a="tab" data-v="play"><span class="ic">${gameIcon(round.game)}</span><span><b>${esc(GAMES[round.game].name)} live</b><small>${esc(round.courseName)}, ${c.played} of ${c.total} holes. ${esc(c.rows[0] && c.played ? leaderText(round,c) : "Tee it up")}</small></span><span class="go">${ic("chev")}</span></button>` : ""}
+  ${lv ? `<button class="livecard" data-a="tab" data-v="play"><span class="ic">${gameIcon(round.game)}</span><span><b>${esc(GAMES[round.game].name)} live</b><small>${esc(round.courseName)}, ${c.played} of ${c.total} holes. ${esc(c.rows[0] && c.played ? leaderText(round,c) : "Tee it up")}</small></span><span class="go">${ic("chev")}</span></button>` : ""}
   ${mastersCard()}
   ${GAME_GROUPS.map(([label,gs]) => `<div class="cap sect" style="margin:22px 0 6px">${label}</div><div class="glist" style="margin:0">${gs.map(g => `<button class="grow ${g===lastGame?"hot":""}" data-a="setup" data-v="${g}"><span class="ic">${g===lastGame?pxSVG(g==="wolf"?WOLF:ICON[GICON[g]],{g:"#0B0D0E",w:"#0B0D0E","#":"#0B0D0E",o:"#0B0D0E"}):gameIcon(g)}</span>${esc(GAMES[g].name)}<span class="go">${ic("chev")}</span></button>`).join("")}</div>`).join("")}
   ${done.length ? `<div class="cap sect">Recent rounds</div>${done.map(histRow).join("")}` : `<div class="cap sect">Pick a game to start</div><div class="rules">Choose a game above, pick the players and the course, then everyone opens the app on their own phone and sees the same card live.</div>`}`;
@@ -1680,10 +1702,34 @@ function sideGamesPanel(r){
   return `<div class="panel" style="margin-top:12px">${(S.junk||[]).length ? `<div class="cap" style="margin-bottom:8px">Junk</div>${r.players.map((p,i)=>({p,i,t:jt[i]})).sort((a,b)=>b.t.total-a.t.total).map(({p,t}) => `<div class="bet"><span style="display:flex;gap:10px;align-items:center">${avatar(p,"av sm")}${esc(p.name)}</span><span class="dim">${S.junk.filter(k=>t[k]).map(k=>`${ENGINE.JUNK[k]} ${t[k]}`).join(", ")||"None yet"}</span><b>${t.total}</b></div>`).join("")}` : ""}
   ${S.snake ? `<div class="banner snakeb" style="margin:12px 0 0"><span class="ic">${snakeIc()}</span><span>${sn.holder>=0?`<b>${esc(r.players[sn.holder].name)}</b> holds the snake`:"Nobody has the snake"}. ${sn.total} three putt${sn.total===1?"":"s"}${+S.snakeValue?`, pot $${sn.total*S.snakeValue}`:""}.</span></div>` : ""}</div>`;
 }
+function missesView(){
+  const L = leagueCfg(), C = crewCfg(), m = ENGINE.leagueMisses(playedRounds(), C.members, L.start||0);
+  if (!m.length) return "";
+  const label = { crew:"Add to crew", count:"Count it", finish:"Count it", resume:"Go to round" };
+  return `<div class="cap sect">Didn’t count</div>${m.map(x => `<div class="miss"><span><b>${fmtDate(x.at)}, ${esc(x.course)}, ${x.holes} holes</b><small>${esc(x.players.join(", "))}</small><em>${esc(x.reason)}</em></span>${x.fix?`<button class="chip" data-a="missFix" data-v="${x.id}|${x.fix}">${label[x.fix]}</button>`:""}</div>`).join("")}`;
+}
+function fixMiss(v){
+  const [id, fix] = v.split("|"), r = playedRounds().find(x => x.id===id); if (!r) return;
+  if (fix==="resume"){ ui.view = null; go("play"); return; }
+  if (fix==="crew"){
+    const C = crewCfg(), add = r.players.filter(p => !p.guest && !C.members.includes(p.id)).map(p => p.id);
+    openSheet(`<h3>Add to the ${esc(C.name)}?</h3><p>${esc(add.map(id => personFor(id,"").name).join(", "))} will join the crew, and every Wolf round where everyone playing is in the crew will count. If this is someone playing under a second profile by mistake, it’s better to remove that profile from Players instead.</p><button class="btn go" id="addc">Add to the crew</button><button class="linkbtn" id="noc">Cancel</button>`, sh => {
+      sh.querySelector("#noc").onclick = closeSheet;
+      sh.querySelector("#addc").onclick = () => { const crew = { ...C, members:C.members.concat(add) }; meta.crew = crew; store.saveMeta({ crew }); if (r.league===false){ store.saveRound(r.id, { league:true, updatedAt:Date.now() }); r.league = true; const h = history.find(x => x.id===r.id); if (h) h.league = true; } closeSheet(); toast("Crew updated"); render({ keepScroll:true }); }; });
+    return;
+  }
+  const partial = fix==="finish" && !ENGINE.roundComplete(r);
+  holdSheet("Count this round?", partial ? `Only ${ENGINE.played(r)} of ${r.holes.length} holes were saved. It will count on the ${leagueCfg().name} using the holes you saved.` : `It will go on the ${leagueCfg().name} table.`, "Hold to count it", () => {
+    const winners = ENGINE.compute(r).winners.map(p => r.players[p].id), patch = { league:true, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} added a round to the Masters` };
+    if (partial) { patch.status = "done"; patch.winners = winners; }
+    store.saveRound(r.id, patch); Object.assign(r, patch); const h = history.find(x => x.id===r.id); if (h) Object.assign(h, patch);
+    closeSheet(); toast("Round added to the Masters"); render({ keepScroll:true });
+  });
+}
 function mastersView(){
   const L = leagueCfg(), C = crewCfg(), t = leagueNow(), pts = L.points;
   const head = `<div class="mhead"><span class="mic" style="width:38px;height:36px">${wolfFull()}</span><div><h2>${esc(L.name)}</h2><p>${esc(C.name)}: ${C.members.map(id=>esc((rosterBy(id)||{name:id}).name)).join(", ")}. ${t.rounds} round${t.rounds===1?"":"s"}${t.start?` since ${fmtDate(t.start)}`:""}.</p></div></div>`;
-  if (!t.rounds) return head + `<div class="status">The table starts with your first finished Wolf round where everyone playing is in the ${esc(C.name)}. Three or more of you, nobody else. Played some Fridays before the app kept every round? Add them below.</div><div style="display:grid;gap:10px;margin-top:14px"><button class="btn line" data-a="pastRound">${ic("plus")}Add a past round</button><button class="btn line" data-a="leagueCfg">Masters settings</button></div>`;
+  if (!t.rounds) return head + `<div class="status">The table starts with your first finished Wolf round where everyone playing is in the ${esc(C.name)}. Three or more of you, nobody else. Played some Fridays before the app kept every round? Add them below.</div>${missesView()}<div style="display:grid;gap:10px;margin-top:14px"><button class="btn line" data-a="pastRound">${ic("plus")}Add a past round</button><button class="btn line" data-a="leagueCfg">Masters settings</button></div>`;
   const leader = t.rows[0], second = t.rows[1], lead = leader && second ? Math.round((leader.total-second.total)*10)/10 : 0;
   const jacket = t.leader ? `<div class="jacket"><span class="av lg">${avSVG(avOf(personFor(t.leader, leader.name)))}</span><div><b>${esc(personFor(t.leader,leader.name).name)} wears the jacket</b><small>${lead>0?`${lead} pts clear`:"Level on points, ahead on wins"}. ${leader.wins} win${leader.wins===1?"":"s"} this season.</small></div></div>` : `<div class="jacket"><div><b>The jacket is up for grabs</b><small>Too close to call at the top.</small></div></div>`;
   const posTxt = k => k ? nth(k) : "";
@@ -1692,7 +1738,7 @@ function mastersView(){
   const weeks = `<div class="cap sect">Week by week</div><div class="grid panel"><table><tr><th>Round</th>${t.rows.map(o=>`<th>${esc((personFor(o.id,o.name).name||"").slice(0,5))}</th>`).join("")}</tr>${t.weeks.slice().reverse().map(w => `<tr class="wk"><td>${fmtDate(w.at)}<small style="display:block;color:var(--stone);font-weight:500">${w.manual?"Added by hand":`${esc(w.course)}, ${w.holes}`}</small></td>${t.rows.map(o => { const x = w.res[o.id]; return `<td>${x?`<span class="c ${x.pos===1?"pt":""}">${posTxt(x.pos)}</span>`:`<span class="dim">·</span>`}</td>`; }).join("")}</tr>`).join("")}</table></div>
     <p class="legend">Points for finishing ${pts.map((p,k)=>`${nth(k+1)} ${p}`).join(", ")}. Ties share the points.${L.best?` Your best ${L.best} rounds count.`:""}</p>`;
   const fame = (L.seasons||[]).length ? `<div class="cap sect">Hall of Fame</div>${L.seasons.slice().reverse().map(s => `<div class="hist"><span class="ic">${pxSVG(ICON.trophy,{"#":"#F2C94C"})}</span><span><b>${esc(s.name)}</b><small>${fmtDate(s.start)} to ${fmtDate(s.end)}, ${s.rounds} rounds</small></span><span class="w">${esc(s.champion?s.champion.name:"No champion")}</span></div>`).join("")}` : "";
-  return head + jacket + table + weeks + fame + `<div style="display:grid;gap:10px;margin-top:18px"><button class="btn line" data-a="pastRound">${ic("plus")}Add a past round</button><button class="btn line" data-a="leagueCfg">Masters settings</button></div>`;
+  return head + jacket + table + weeks + missesView() + fame + `<div style="display:grid;gap:10px;margin-top:18px"><button class="btn line" data-a="pastRound">${ic("plus")}Add a past round</button><button class="btn line" data-a="leagueCfg">Masters settings</button></div>`;
 }
 const momentKey = m => `${m.roundId}:${m.i}:${m.ids.join("+")}`;
 const REACTS = ["😂","👏","🔥","💀","🐍"];
@@ -2034,7 +2080,7 @@ function startGame(){
   const go2 = () => {
     const players = s.sel.map(id => { const p = setupPerson(id); const o = { id:p.id, name:p.name, hcp:+p.hcp||0 }; if (p.guest) o.guest = true; if (p.av) o.av = { ...p.av }; if (p.line) o.line = p.line; if (s.game==="three") o.clubs = (s.clubs[id]||[]).slice(); return o; });
     const id = newId(), now = Date.now();
-    const r = { league: s.game==="wolf" && crewMatch(s.sel) ? s.league!==false : false, id, game:s.game, courseId:c.id, courseName:c.name, holesMode:s.holesMode, holes, players, settings:{ ...s.settings }, useHcp:!!s.useHcp, results:{}, status:"live", createdAt:now, updatedAt:now, lastBy:device, lastMsg:`${myName()} started ${GAMES[s.game].name}`, winners:[] };
+    const r = { league: s.league!==false, id, game:s.game, courseId:c.id, courseName:c.name, holesMode:s.holesMode, holes, players, settings:{ ...s.settings }, useHcp:!!s.useHcp, results:{}, status:"live", createdAt:now, updatedAt:now, lastBy:device, lastMsg:`${myName()} started ${GAMES[s.game].name}`, winners:[] };
     if (live()) store.saveRound(round.id, { status:"ended", updatedAt:now });
     store.saveRound(id, r, true);
     meta.active = id; meta.lastCourse = c.id; store.saveMeta({ active:id, lastCourse:c.id });
@@ -2267,6 +2313,7 @@ const ACT = {
   syncInfo: () => toast(SYNC_TEXT[shown] || SYNC_TEXT.live),
   who: () => askWho(),
   pastRound: () => pastRoundSheet(),
+  missFix: v => { haptic(); fixMiss(v); },
   masters: () => { haptic(); ui.boardTab = "masters"; go("board"); },
   scope: v => { ui.scope = v; haptic(); render({ keepScroll:true }); },
   leagueCfg: () => leagueSheet(),
