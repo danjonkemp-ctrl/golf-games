@@ -429,6 +429,9 @@ canvas#overlay{position:fixed;inset:0;width:100%;height:100%;z-index:65;pointer-
 .miss em{display:block;font-style:normal;font-size:12px;color:var(--accent);margin-top:3px}
 .miss .chip{height:34px;flex:none}
 
+.miss .mfix{display:flex;flex-direction:column;gap:6px;flex:none;align-items:stretch}
+.mfix .chip{justify-content:center;height:34px}
+
 </style>
 </head>
 <body>
@@ -867,12 +870,12 @@ function leagueMisses(rounds, members, start){ // recent Wolf rounds that did no
   rounds.filter(r => r && r.game==="wolf" && !r.manual).sort((a,b) => (b.createdAt||0)-(a.createdAt||0)).slice(0,12).forEach(r => {
     const outsiders = r.players.filter(p => !p.guest && !set.has(p.id)), real = r.players.filter(p => !p.guest);
     let reason = null, fix = null;
-    if (outsiders.length) { reason = `${outsiders.map(p => p.name).join(", ")} ${outsiders.length>1?"aren’t":"isn’t"} in the crew`; fix = "crew"; }
+    if (outsiders.length) { reason = `${outsiders.map(p => p.name).join(", ")} ${outsiders.length>1?"aren’t":"isn’t"} in the crew`; fix = real.length-outsiders.length>=3 ? "guest" : "crew"; }
     else if (real.length<3) reason = "Needs at least three of the crew";
     else if (switchedOff(r)) { reason = "“Counts for the Masters” was switched off"; fix = "count"; }
     else if ((r.createdAt||0) < (start||0)) reason = "Played before the season start date";
     else if (!roundComplete(r)) { reason = `Not finished, ${played(r)} of ${r.holes.length} holes saved`; fix = r.status==="live" ? "resume" : "finish"; }
-    if (reason) out.push({ id:r.id, at:r.createdAt||0, course:r.courseName, holes:r.holes.length, played:played(r), reason, fix, outsiders:outsiders.filter(p=>!p.guest).map(p=>p.id), players:r.players.map(p=>p.name) });
+    if (reason) out.push({ id:r.id, at:r.createdAt||0, course:r.courseName, holes:r.holes.length, played:played(r), reason, fix, outsiders:outsiders.map(p=>p.id), canGuest: real.length-outsiders.length>=3, players:r.players.map(p=>p.name) });
   });
   return out;
 }
@@ -1710,12 +1713,30 @@ function sideGamesPanel(r){
 function missesView(){
   const L = leagueCfg(), C = crewCfg(), m = ENGINE.leagueMisses(playedRounds(), C.members, L.start||0);
   if (!m.length) return "";
-  const label = { crew:"Add to crew", count:"Count it", finish:"Count it", resume:"Go to round" };
-  return `<div class="cap sect">Didn’t count</div>${m.map(x => `<div class="miss"><span><b>${fmtDate(x.at)}, ${esc(x.course)}, ${x.holes} holes</b><small>${esc(x.players.join(", "))}</small><em>${esc(x.reason)}</em></span>${x.fix?`<button class="chip" data-a="missFix" data-v="${x.id}|${x.fix}">${label[x.fix]}</button>`:""}</div>`).join("")}`;
+  const label = { crew:"Add to crew", guest:"Treat as guest", count:"Count it", finish:"Count it", resume:"Go to round" };
+  const btns = x => x.fix==="guest" ? `<span class="mfix"><button class="chip" data-a="missFix" data-v="${x.id}|guest">Treat as guest</button><button class="chip ghost" data-a="missFix" data-v="${x.id}|crew">Add to crew</button></span>` : x.fix ? `<button class="chip" data-a="missFix" data-v="${x.id}|${x.fix}">${label[x.fix]}</button>` : "";
+  return `<div class="cap sect">Didn’t count</div>${m.map(x => `<div class="miss"><span><b>${fmtDate(x.at)}, ${esc(x.course)}, ${x.holes} holes</b><small>${esc(x.players.join(", "))}</small><em>${esc(x.reason)}</em></span>${btns(x)}</div>`).join("")}`;
 }
 function fixMiss(v){
   const [id, fix] = v.split("|"), r = playedRounds().find(x => x.id===id); if (!r) return;
   if (fix==="resume"){ ui.view = null; go("play"); return; }
+  if (fix==="guest"){
+    const C = crewCfg(), out = r.players.filter(p => !p.guest && !C.members.includes(p.id)), names = out.map(p => p.name).join(" and ");
+    const apply = remove => {
+      const ids = out.map(p => p.id), players = r.players.map(p => ids.includes(p.id) ? { ...p, guest:true } : p);
+      store.saveRound(r.id, { players, league:true, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} made ${names} a guest` });
+      r.players = players; r.league = true; const h = history.find(x => x.id===r.id); if (h){ h.players = players; h.league = true; }
+      if (remove){ const list = roster().filter(p => !ids.includes(p.id)); meta.players = list; store.saveMeta({ players:list }); }
+      closeSheet(); toast(remove ? `${names} is a guest now and off your players list` : `${names} is a guest. Round added to the Masters`); render({ keepScroll:true });
+    };
+    openSheet(`<h3>Treat ${esc(names)} as a guest?</h3><p>Only for this round. It counts for the ${esc(leagueCfg().name)}, positions are worked out among the crew, and ${esc(names)} stays off the table. The scores don’t change.</p>
+      <button class="btn go" id="gst">Treat as guest</button>
+      <button class="btn line" id="gstx" style="margin-top:10px">Guest, and remove from Players</button>
+      <p class="legend">Removing them from Players means they won’t show when you pick players. Their scores stay in this round.</p>
+      <button class="linkbtn" id="gno">Cancel</button>`, sh => {
+      sh.querySelector("#gst").onclick = () => apply(false); sh.querySelector("#gstx").onclick = () => apply(true); sh.querySelector("#gno").onclick = closeSheet; });
+    return;
+  }
   if (fix==="crew"){
     const C = crewCfg(), add = r.players.filter(p => !p.guest && !C.members.includes(p.id)).map(p => p.id);
     openSheet(`<h3>Add to the ${esc(C.name)}?</h3><p>${esc(add.map(id => personFor(id,"").name).join(", "))} will join the crew, and every Wolf round where everyone playing is in the crew will count. If this is someone playing under a second profile by mistake, it’s better to remove that profile from Players instead.</p><button class="btn go" id="addc">Add to the crew</button><button class="linkbtn" id="noc">Cancel</button>`, sh => {
