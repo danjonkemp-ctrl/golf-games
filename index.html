@@ -1013,9 +1013,24 @@ const COURSES = [
   { id:"camden", name:"Camden", area:"South", holes:18 },
   { id:"kareela", name:"Kareela", area:"Sutherland Shire", holes:18 },
   { id:"cronulla", name:"Cronulla", area:"Sutherland Shire", holes:18 },
-  { id:"woolooware", name:"Woolooware", area:"Sutherland Shire", holes:18 }
+  { id:"woolooware", name:"Woolooware", area:"Sutherland Shire", holes:18 },
+  // Hunter Valley
+  { id:"hunter-valley", name:"Hunter Valley Golf Club", area:"Hunter Valley", holes:18, aka:"crowne plaza lovedale country club hvgcc",
+    card:[[4,14],[4,16],[3,18],[3,7],[4,10],[4,4],[4,1],[3,3],[5,5],[3,6],[4,17],[4,8],[4,2],[5,13],[4,11],[5,15],[3,9],[5,12]] },
+  { id:"cypress-lakes", name:"Cypress Lakes", area:"Hunter Valley", holes:18, aka:"cyprus cypres oaks pokolbin",
+    card:[[5,17],[4,9],[3,8],[4,3],[3,11],[5,16],[4,18],[4,15],[4,1],[4,6],[3,14],[4,5],[4,10],[5,7],[3,12],[5,2],[4,13],[4,4]] },
+  { id:"the-vintage", name:"The Vintage", area:"Hunter Valley", holes:18, aka:"vintage rothbury greg norman",
+    card:[[4,16],[4,9],[4,1],[4,11],[3,15],[4,4],[5,18],[3,5],[4,2],[5,7],[4,10],[3,14],[4,13],[5,12],[4,17],[4,6],[3,8],[4,3]] },
+  { id:"cessnock", name:"Cessnock (Stonebridge)", area:"Hunter Valley", holes:18, aka:"stonebridge",
+    card:[[4,6],[4,12],[3,13],[4,2],[5,18],[4,5],[4,4],[4,3],[4,9],[4,15],[4,1],[3,11],[5,8],[4,16],[3,7],[5,17],[5,10],[3,14]] },
+  { id:"kurri", name:"Kurri", area:"Hunter Valley", holes:18, aka:"kurri kurri heddon greta",
+    card:[[4,7],[4,9],[4,13],[4,6],[5,3],[3,18],[4,4],[3,16],[5,11],[4,10],[4,1],[5,8],[4,2],[3,17],[4,14],[4,5],[3,15],[4,12]] },
+  { id:"branxton", name:"Branxton", area:"Hunter Valley", holes:9 },
+  { id:"maitland", name:"Maitland", area:"Hunter Valley", holes:18 },
+  { id:"easts-maitland", name:"Easts (Maitland)", area:"Hunter Valley", holes:18, aka:"east maitland" },
+  { id:"singleton", name:"Singleton", area:"Hunter Valley", holes:18 }
 ];
-const AREAS = ["Northern Beaches","North Shore","Hills and West","East and City","Inner West","South","Sutherland Shire","Your courses"];
+const AREAS = ["Northern Beaches","North Shore","Hills and West","East and City","Inner West","South","Sutherland Shire","Hunter Valley","Your courses"];
 const DEFAULT_SI18 = [7,3,15,1,11,5,17,9,13,8,4,16,2,12,6,18,10,14];
 const DEFAULT_SI9 = [4,2,8,1,6,3,9,5,7];
 
@@ -1915,7 +1930,7 @@ function editPlayer(id, opts={}){
 }
 function pickCourse(onPick, editMode){
   const cur = ui.setup ? ui.setup.courseId : null;
-  const list = q => { const all = allCourses().filter(c => !q || c.name.toLowerCase().includes(q.toLowerCase()) || c.area.toLowerCase().includes(q.toLowerCase()));
+  const list = q => { const words = String(q||"").toLowerCase().trim().split(/\s+/).filter(Boolean); const all = allCourses().filter(c => { const hay = (c.name+" "+c.area+" "+(c.aka||"")).toLowerCase(); return words.every(w => hay.includes(w)); });
     return AREAS.map(a => { const cs = all.filter(c => c.area===a); return cs.length ? `<div class="cap carea">${esc(a)}</div>${cs.map(c => `<button class="copt" data-c="${c.id}" aria-pressed="${c.id===cur}"><span>${esc(c.name)}</span><small>${c.holes} holes${cardFor(c)?"":", needs card"}</small></button>`).join("")}` : ""; }).join("") || `<p>No course found.</p>`; };
   openSheet(`<h3>${editMode?"Courses":"Pick a course"}</h3><p>${editMode?"Tap a course to check or fix its pars and stroke index.":"Every course in the list can be played. If a card hasn’t been set, you set the pars once and it’s saved for the whole group."}</p>
     <div class="search"><input class="field" id="cq" placeholder="Search courses" autocomplete="off"></div><div id="clist">${list("")}</div>
