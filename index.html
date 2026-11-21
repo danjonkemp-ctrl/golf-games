@@ -169,6 +169,11 @@ main{max-width:540px;margin:0 auto;padding:0 16px 230px;min-height:100vh}
 .track::-webkit-scrollbar{display:none}
 .track button{flex:none;width:36px;height:34px;border-radius:7px;background:var(--card2);font:700 12px var(--mono);color:var(--stone);text-align:center;transition:transform .3s var(--spring),background .2s,color .2s}
 .track button.done{color:var(--lime);background:#1d2a12}
+.track button.part{color:var(--lime);background:repeating-linear-gradient(135deg,#1d2a12 0 4px,var(--card2) 4px 8px)}
+.na{flex:none;font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--stone);background:var(--card2);border-radius:7px;min-height:44px;min-width:44px;padding:0 8px}
+.na[aria-pressed=true]{color:var(--midnight);background:var(--stone)}
+.srow.isna .sv b,.srow.isna .sv span{color:var(--stone)}
+.srow.isna .sv b{font-size:18px;line-height:28px}
 .track button.cur{background:var(--lime);color:var(--midnight);transform:translateY(-3px)}
 .strip{display:flex;gap:4px;justify-content:space-between;margin-bottom:12px}
 .strip>div{flex:1;text-align:center;min-width:0}
@@ -544,7 +549,9 @@ function teamShots(r, side){ // alternate shot: half the pair's combined handica
 }
 const netOf = (r,p,i,g) => g - playerShots(r,p,i);
 const res = (r,i) => r.results && r.results[String(i)];
-const played = r => r.holes.reduce((a,h,i)=>a+(res(r,i)?1:0),0);
+const holeFull = h => !!h && (!h.s || h.s.every(x => x!=null)); // "n/a" scores (null) wait for the other group
+const played = r => r.holes.reduce((a,h,i)=>a+(holeFull(res(r,i))?1:0),0);
+const thruOf = (r,p) => r.holes.reduce((a,h,i)=>{ const x = res(r,i); return a + (x && x.s && x.s[p]!=null ? 1 : 0); },0);
 
 /* ---------- head to head helper ---------- */
 function matchFrom(diffs, n, stopWhenDecided){
@@ -636,8 +643,9 @@ function compute(r){
     if (g==="stableford"){
       const t = Array(P).fill(0);
       r.holes.forEach((hole,i)=>{ const h=res(r,i); if(!h) return;
-        h.s.forEach((s,p)=>{ const v = Math.max(0, 2 + (+hole.par) - netOf(r,p,i,s)); t[p]+=v; perHole[i].pts[p]=v; }); });
-      rows = [...Array(P).keys()].map(p=>({players:[p], value:t[p], text:String(t[p]), sub:`${gross[p]} strokes`, tie:-gross[p]}));
+        h.s.forEach((s,p)=>{ if (s==null) return; const v = Math.max(0, 2 + (+hole.par) - netOf(r,p,i,s)); t[p]+=v; perHole[i].pts[p]=v; }); });
+      const split = r.holes.some((x,i)=>{ const h = res(r,i); return h && !holeFull(h); }) || [...Array(P).keys()].some(p => thruOf(r,p)!==thruOf(r,0));
+      rows = [...Array(P).keys()].map(p=>({players:[p], value:t[p], text:String(t[p]), sub: split && thruOf(r,p)<n ? `thru ${thruOf(r,p)}, ${gross[p]} strokes` : `${gross[p]} strokes`, tie:-gross[p]}));
       rows.sort((a,b)=>b.value-a.value || b.tie-a.tie);
     } else {
       higherBetter = false; unit = "net";
@@ -948,7 +956,7 @@ function previewHole(r, i, h){
   return c.perHole[i];
 }
 
-const ENGINE = { tourOff, tourRounds, tourMisses, crewOk, switchedOff, leagueMisses, JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
+const ENGINE = { tourOff, tourRounds, tourMisses, holeFull, thruOf, crewOk, switchedOff, leagueMisses, JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
 
 
 /* ===================== SYDNEY COURSES =====================
@@ -1369,7 +1377,7 @@ function renderHome(){
   const done = history.filter(r => r.status==="done").slice(0,5);
   $("#screen").innerHTML = `
   <div class="hero"><canvas class="px" id="heroCv"></canvas><div class="say">Same course.<br>Different games.<i></i></div></div>
-  ${lv ? `<button class="livecard" data-a="tab" data-v="play"><span class="ic">${gameIcon(round.game)}</span><span><b>${esc(GAMES[round.game].name)} live</b><small>${esc(round.courseName)}, ${c.played} of ${c.total} holes. ${esc(c.rows[0] && c.played ? leaderText(round,c) : "Tee it up")}</small></span><span class="go">${ic("chev")}</span></button>` : ""}
+  ${lv ? `<button class="livecard" data-a="tab" data-v="play"><span class="ic">${gameIcon(round.game)}</span><span><b>${esc(GAMES[round.game].name)} live</b><small>${esc(round.courseName)}, ${holesText(round,c)}. ${esc(c.rows[0] && c.played ? leaderText(round,c) : "Tee it up")}</small></span><span class="go">${ic("chev")}</span></button>` : ""}
   ${mastersCard()}
   ${GAME_GROUPS.map(([label,gs]) => `<div class="cap sect" style="margin:22px 0 6px">${label}</div><div class="glist" style="margin:0">${gs.map(g => `<button class="grow ${g===lastGame?"hot":""}" data-a="setup" data-v="${g}"><span class="ic">${g===lastGame?pxSVG(g==="wolf"?WOLF:ICON[GICON[g]],{g:"#0B0D0E",w:"#0B0D0E","#":"#0B0D0E",o:"#0B0D0E"}):gameIcon(g)}</span>${esc(GAMES[g].name)}<span class="go">${ic("chev")}</span></button>`).join("")}</div>`).join("")}
   ${done.length ? `<div class="cap sect">Recent rounds</div>${done.map(histRow).join("")}` : `<div class="cap sect">Pick a game to start</div><div class="rules">Choose a game above, pick the players and the course, then everyone opens the app on their own phone and sees the same card live.</div>`}`;
@@ -1479,6 +1487,11 @@ function renderSetup(){
 }
 
 /* ---------- play ---------- */
+// n/a: on a Stableford round of four or more, a phone can leave the other group's scores blank for them to fill in
+const naOk = () => !!round && round.game==="stableford" && round.players.length>=4;
+const naKey = () => "gg:na:"+device+":"+(round && round.id);
+const naMine = () => { try { return JSON.parse(localStorage.getItem(naKey())) || []; } catch(e) { return []; } };
+const naSet = (p, on) => { const m = new Set(naMine()); on ? m.add(p) : m.delete(p); try { localStorage.setItem(naKey(), JSON.stringify([...m])); } catch(e) {} };
 function holeDraft(i){
   const k = String(i);
   if (!drafts[k]){
@@ -1488,13 +1501,14 @@ function holeDraft(i){
     if (round.game==="alt") d.t = d.t || [par, par];
     else if (round.game==="bbb") d.b = d.b || [-1,-1,-1];
     else d.s = d.s || Array(P).fill(par);
+    if (naOk() && !r){ const m = naMine(); m.forEach(p => { if (p<P) d.s[p] = null; }); }
     if (round.game==="wolf" && d.wolf==null) d.wolf = ENGINE.wolfWho(round, i);
     if (round.game==="hammer") d.hm = d.hm || { v:1, by:-1, fold:-1 };
-    d.j = d.j || {}; d.sn = d.sn || [];
+    d.j = d.j || {}; d.sn = d.sn || []; d.mine = [];
   }
   return drafts[k];
 }
-const ready = (i, d) => round.game!=="wolf" || (d.mode && (d.mode!=="partner" || d.partner!=null));
+const ready = (i, d) => round.game==="stableford" ? d.s.some(x => x!=null) : (round.game!=="wolf" || (d.mode && (d.mode!=="partner" || d.partner!=null)));
 const relLabel = d => ({"-3":"Albatross","-2":"Eagle","-1":"Birdie","0":"Par","1":"Bogey","2":"Double","3":"Triple"})[d] || (d<0?"":"+"+d);
 function stripVals(c){
   const r = round, P = r.players.length, val = Array(P).fill("");
@@ -1550,12 +1564,12 @@ function renderPlay(opts={}){
     if (S.snake) scores += `<div class="banner snakeb"><span class="ic">${snakeIc()}</span><span>${sn.holder>=0?`<b>${esc(ENGINE.pname(r,sn.holder))}</b> holds the snake`:"Nobody has the snake yet"}. ${sn.total} three putt${sn.total===1?"":"s"} so far${+S.snakeValue?`, pot $${sn.total*S.snakeValue}`:""}.</span></div>`;
     scores += `<div class="panel">${order.map(p => { const sh = r.useHcp ? ENGINE.playerShots(r,p,i) : 0, pl = r.players[p]; return `<div class="srow" data-p="${p}">${avatar(pl,"av")}
       <div class="who"><b>${esc(pl.name)}</b><span class="tag"></span>${sh?`<span class="tag a">${sh} shot${sh>1?"s":""}</span>`:""}${r.game==="three"&&pl.clubs?`<span class="tag">${esc(pl.clubs.join(", "))}</span>`:""}</div>
-      <div class="stp"><button class="pm" data-a="dec" data-v="${p}" aria-label="One less for ${esc(pl.name)}">${ic("minus")}</button><button class="sv" data-a="pickS" data-v="${p}" aria-label="Pick a score for ${esc(pl.name)}"><b></b><span></span></button><button class="pm" data-a="inc" data-v="${p}" aria-label="One more for ${esc(pl.name)}">${ic("plus")}</button></div></div>${jrow(p)}`; }).join("")}</div>`;
+      ${naOk()?`<button class="na" data-a="na" data-v="${p}" aria-label="${esc(pl.name)} not played yet">n/a</button>`:""}<div class="stp"><button class="pm" data-a="dec" data-v="${p}" aria-label="One less for ${esc(pl.name)}">${ic("minus")}</button><button class="sv" data-a="pickS" data-v="${p}" aria-label="Pick a score for ${esc(pl.name)}"><b></b><span></span></button><button class="pm" data-a="inc" data-v="${p}" aria-label="One more for ${esc(pl.name)}">${ic("plus")}</button></div></div>${jrow(p)}`; }).join("")}</div>`;
   }
   const finished = c.done;
   $("#screen").innerHTML = `<section id="pv">
     <div class="map"><div class="yd"><span class="chip">${esc(GAMES[r.game].name)}</span><span class="chip ghost">${esc(r.courseName)}</span></div><canvas class="px" id="mapCv"></canvas></div>
-    <div class="track" id="track">${r.holes.map((x,j) => `<button data-a="hole" data-v="${j}" class="${r.results[String(j)]?"done":""} ${j===i?"cur":""}" aria-label="Hole ${x.n}">${x.n}</button>`).join("")}</div>
+    <div class="track" id="track">${r.holes.map((x,j) => `<button data-a="hole" data-v="${j}" class="${ENGINE.holeFull(r.results[String(j)])?"done":r.results[String(j)]?"part":""} ${j===i?"cur":""}" aria-label="Hole ${x.n}${r.results[String(j)]&&!ENGINE.holeFull(r.results[String(j)])?", waiting on scores":""}">${x.n}</button>`).join("")}</div>
     ${finished ? `<div class="donebox"><span class="ic" style="display:block">${gameIconBig(r.game)}</span><b>${c.winners.length?"Winner":"All square"}</b><div>${esc(c.winners.length?c.winners.map(p=>ENGINE.pname(r,p)).join(" & "):c.status||"Nobody could split them")}</div><button class="btn go" data-a="finish" style="margin-top:14px">Finish round</button></div>` : ""}
     <div class="strip">${(ENGINE.isTeamGame(r)?ENGINE.sides(r).map(s=>s[0]):[...r.players.keys()]).map(p => `<div class="${lead.includes(p)?"top1":""}">${avatar(r.players[p],"av "+(lead.includes(p)?"hi":""))}<b>${esc(ENGINE.isTeamGame(r)?ENGINE.sides(r).find(s=>s.includes(p)).map(q=>r.players[q].name).join(" & "):r.players[p].name)}</b><span>${esc(val[p] || (c.unit==="match"||r.game==="nassau" ? "·" : "0"))}</span></div>`).join("")}</div>
     ${panel}${scores}</section>`;
@@ -1567,7 +1581,9 @@ function renderPlay(opts={}){
     $$(".srow,.pk").forEach((el,k) => anim(el, [{ transform:"translateY(10px)", opacity:0 }, { transform:"none", opacity:1 }], { duration:340, delay:120+k*40, easing:"cubic-bezier(.2,.8,.2,1)", fill:"backwards" }));
   }
 }
-const nextHole = () => { const i = round.holes.findIndex((h,j) => !round.results[String(j)]); return i<0 ? round.holes.length-1 : i; };
+const nextHole = () => { const m = naOk() ? new Set(naMine()) : null;
+  const i = round.holes.findIndex((h,j) => { const x = round.results[String(j)]; if (!x) return true; if (!m || !x.s) return false; return x.s.some((v,p) => v==null && !m.has(p)); });
+  return i<0 ? round.holes.length-1 : i; };
 const teeOrder = w => { const P = round.players.length; return [...Array(P).keys()].map(j => (w+j)%P); };
 function syncPlay(){
   if (!live()) return;
@@ -1586,6 +1602,8 @@ function syncPlay(){
   const team = r.game==="wolf" ? (d.mode==="partner" ? [d.wolf,d.partner] : [d.wolf]) : [];
   $$(".srow[data-p]").forEach(row => {
     const p = +row.dataset.p, g = d.s[p], diff = g - h.par, tg = row.querySelector(".tag");
+    row.classList.toggle("isna", g==null); const nb = row.querySelector(".na"); if (nb) nb.setAttribute("aria-pressed", g==null);
+    if (g==null){ const sv = row.querySelector(".sv"); sv.className = "sv"; sv.querySelector("b").textContent = "n/a"; sv.querySelector("span").textContent = "Later"; return; }
     if (r.game==="wolf"){
       if (p===d.wolf){ tg.textContent = d.mode==="lone"?"Lone wolf":d.mode==="blind"?"Blind wolf":"Wolf"; tg.className = "tag w"; }
       else if (team.includes(p)){ tg.textContent = "Partner"; tg.className = "tag p"; }
@@ -1597,10 +1615,11 @@ function syncPlay(){
   $$(".srow[data-t]").forEach(row => { const k = +row.dataset.t, g = d.t[k], diff = g - h.par, sv = row.querySelector(".sv"); sv.className = "sv"+(diff<0?" under":""); sv.querySelector("b").textContent = g; sv.querySelector("span").textContent = relLabel(diff); });
   // verdict
   const ok = ready(i, d); let v = "";
-  if (!ok) v = `<b>Who’s with the wolf?</b>Pick a partner or go alone`;
+  if (!ok) v = r.game==="stableford" ? `<b>Everyone is n/a</b>Add at least one score` : `<b>Who’s with the wolf?</b>Pick a partner or go alone`;
   else {
-    const ph = ENGINE.previewHole(r, i, d);
-    if (r.game==="stableford") v = `<b>${r.players.map((p,k)=>`${esc(p.name)} ${ph.pts[k]}`).join(", ")}</b>Stableford points`;
+    const ph = ENGINE.previewHole(r, i, r.game==="stableford" ? { ...d, s:mergeS(r, i, d.s) } : d);
+    if (r.game==="stableford"){ const sv = (r.results[String(i)]||{}).s || [], wait = r.players.map((p,k)=>k).filter(k => d.s[k]==null && sv[k]==null);
+      v = `<b>${r.players.map((p,k)=>d.s[k]==null?null:`${esc(p.name)} ${ph.pts[k]}`).filter(Boolean).join(", ")}</b>${wait.length?`Waiting on ${esc(wait.map(k=>r.players[k].name).join(", "))}`:"Stableford points"}`; }
     else if (r.game==="three") v = `<b>${r.players.map((p,k)=>`${esc(p.name)} ${ph.pts[k]===0?"E":ph.pts[k]>0?"+"+ph.pts[k]:ph.pts[k]}`).join(", ")}</b>Net to par on this hole`;
     else if (r.game==="bbb") v = `<b>${esc(ph.note || "No points yet")}</b>Tap who won each one`;
     else if (r.game==="vegas") v = `<b>${esc(ph.note)}</b>Lower number wins the difference`;
@@ -1611,10 +1630,17 @@ function syncPlay(){
   const s = $("#save"); s.disabled = !ok; s.textContent = saved ? "Update" : "Save";
 }
 
+// keep the other group's saved scores: only the players this phone scored are written over
+const holesText = (r, c) => { const t = [...new Set(r.players.map((x,k) => ENGINE.thruOf(r,k)))].sort((a,b) => b-a);
+  return t.length>1 ? `groups thru ${t.slice(0,3).join(" and ")} of ${c.total} holes` : `${c.played} of ${c.total} holes`; };
+const touch = p => { const d = holeDraft(ui.view); if (d.mine && !d.mine.includes(p)) d.mine.push(p); };
+const mergeS = (r, i, s) => { const old = ((r.results[String(i)]||{}).s) || []; return s.map((v,p) => v!=null ? v : (old[p]!=null ? old[p] : null)); };
 async function saveHole(){
   const r = round, i = ui.view, k = String(i), d = holeDraft(i), h = r.holes[i];
   const prev = r.results[k] ? clone(r.results[k]) : null;
-  const res = r.game==="alt" ? { t:d.t.slice() } : r.game==="bbb" ? { b:d.b.slice() } : r.game==="wolf" ? { s:d.s.slice(), wolf:d.wolf, mode:d.mode, partner:d.mode==="partner"?d.partner:null } : { s:d.s.slice() };
+  if (naOk() && prev && prev.s && d.mine && d.mine.length && d.mine.length < r.players.length && prev.s.some((v,p) => v!=null && !d.mine.includes(p)))
+    r.players.forEach((x,p) => naSet(p, !d.mine.includes(p)));
+  const res = r.game==="alt" ? { t:d.t.slice() } : r.game==="bbb" ? { b:d.b.slice() } : r.game==="wolf" ? { s:d.s.slice(), wolf:d.wolf, mode:d.mode, partner:d.mode==="partner"?d.partner:null } : { s: r.game==="stableford" ? mergeS(r, i, d.s) : d.s.slice() };
   if (r.game==="hammer") res.hm = { ...d.hm };
   const jk = {}; Object.keys(d.j||{}).forEach(p => { if ((d.j[p]||[]).length) jk[p] = d.j[p].slice(); }); if (Object.keys(jk).length) res.j = jk;
   if (d.sn && d.sn.length) res.sn = d.sn.slice();
@@ -1662,7 +1688,7 @@ function renderBoard(){
   if (!r){ $("#screen").innerHTML = tabs + `<div class="status">No rounds yet. Start a game from Home and the table fills in as you play.</div>`; return; }
   const c = ENGINE.compute(r), team = ENGINE.isTeamGame(r);
   const unitLabel = { pts:"Points", skins:"Skins", net:"To par", match:"Match", "$":"Money", bets:"Bets", sixes:"Sixes", rabbits:"Rabbits" }[c.unit] || "Score";
-  $("#screen").innerHTML = `<h1 class="h1">${esc(GAMES[r.game].name)}</h1><p class="sub">${esc(r.courseName)}, ${c.played} of ${c.total} holes${r.status==="done"?", finished":""}</p>${tabs}
+  $("#screen").innerHTML = `<h1 class="h1">${esc(GAMES[r.game].name)}</h1><p class="sub">${esc(r.courseName)}, ${holesText(r,c)}${r.status==="done"?", finished":""}</p>${tabs}
   <div class="lbh"><span>Pos</span><span>${team?"Pair":"Player"}</span><span>${unitLabel}</span></div>
   <ul class="lb">${c.rows.map((row,k) => { const first = k===0 && c.winners.length && row.players.every(p=>c.winners.includes(p)) && c.played>0;
     return `<li class="${first?"first":""}"><span class="n">${k+1}</span><span class="who">${row.players.map(p=>avatar(r.players[p],"av sm")).join("")}<span style="min-width:0"><b>${esc(row.players.map(p=>r.players[p].id===me?"You":r.players[p].name).join(" & "))}</b>${(first && row.players.length===1 && lineOf(r.players[row.players[0]])) ? `<small>${esc(quote(lineOf(r.players[row.players[0]])))}</small>` : row.sub?`<small>${esc(row.sub)}</small>`:""}</span></span><span class="v">${esc(row.text||"·")}</span></li>`; }).join("")}</ul>
@@ -1858,7 +1884,7 @@ function renderScorecard(){
   let body = "";
   if (team){ body = ENGINE.sides(r).map((s,k) => `<tr><td>${esc(ENGINE.sideName(r,s))}</td>${r.holes.map((h,i)=>{ const x = r.results[String(i)]; if(!x) return "<td></td>"; const won = c.perHole[i].side===(k===0?1:-1); return `<td><span class="c ${won?"pt":""}">${x.t[k]}</span></td>`; }).join("")}<td class="tot">${r.holes.reduce((a,h,i)=>a+((r.results[String(i)]||{}).t||[0,0])[k],0)}</td></tr>`).join(""); }
   else if (r.game==="bbb"){ body = r.players.map((p,pi) => `<tr><td>${esc(p.name)}</td>${r.holes.map((h,i)=>{ const v = c.perHole[i].pts[pi]; return `<td>${r.results[String(i)]?`<span class="c ${v?"pt":""}">${v}</span>`:""}</td>`; }).join("")}<td class="tot">${c.perHole.reduce((a,x)=>a+x.pts[pi],0)}</td></tr>`).join(""); }
-  else body = r.players.map((p,pi) => `<tr><td>${esc(p.name)}</td>${r.holes.map((h,i)=>{ const x = r.results[String(i)]; if(!x) return "<td></td>"; const pts = c.perHole[i].pts[pi], g = x.s[pi];
+  else body = r.players.map((p,pi) => `<tr><td>${esc(p.name)}</td>${r.holes.map((h,i)=>{ const x = r.results[String(i)]; if(!x) return "<td></td>"; const pts = c.perHole[i].pts[pi], g = x.s[pi]; if (g==null) return "<td></td>";
       const cls = r.game==="three" ? (g<h.par?"u":"") : (pts>0?"pt":"");
       return `<td><span class="c ${cls} ${r.game==="wolf"&&x.wolf===pi?"w":""}">${g}</span></td>`; }).join("")}<td class="tot">${c.gross[pi]}</td></tr>`).join("");
   const legend = { wolf:"Outlined: the wolf. Lime: scored points.", skins:"Lime: won skins on the hole.", stableford:"Lime: scored Stableford points.", match:"Lime: won the hole.", nassau:"Lime: won the hole.", alt:"Lime: pair won the hole.", bbb:"Points won on each hole.", three:"Lime: under par." }[r.game];
@@ -1893,7 +1919,7 @@ function pickScore(p, isTeam){
   const r = round, i = ui.view, h = r.holes[i], d = holeDraft(i);
   const title = isTeam ? ENGINE.sideName(r, ENGINE.sides(r)[p]) : r.players[p].name;
   openSheet(`<h3>${esc(title)}</h3><p>Hole ${h.n}, par ${h.par}</p><div class="numgrid">${Array.from({length:10},(_,k)=>k+1).map(n=>`<button data-n="${n}" class="${n===h.par?"par":""}">${n}${Math.abs(n-h.par)<=2?`<small>${relLabel(n-h.par)}</small>`:""}</button>`).join("")}</div>`,
-    sh => sh.querySelectorAll("[data-n]").forEach(b => b.onclick = () => { (isTeam ? d.t : d.s)[p] = +b.dataset.n; haptic(); closeSheet(); syncPlay(); bump($(`.srow[data-${isTeam?"t":"p"}="${p}"] .sv b`)); }));
+    sh => sh.querySelectorAll("[data-n]").forEach(b => b.onclick = () => { (isTeam ? d.t : d.s)[p] = +b.dataset.n; if (!isTeam){ naSet(p,false); touch(p); } haptic(); closeSheet(); syncPlay(); bump($(`.srow[data-${isTeam?"t":"p"}="${p}"] .sv b`)); }));
 }
 function askWho(next){
   openSheet(`<h3>Who’s holding this phone?</h3><p>Pick your name and this phone remembers you. Your profile is yours, only you can change it.</p><div class="whogrid">${roster().map(p=>`<button data-me="${p.id}">${avatar(p,"av sm")}<span style="min-width:0;text-align:left">${esc(p.name)}${ownedByOther(p)?`<small style="display:block;font-size:10px;color:var(--stone);font-weight:500">On another phone</small>`:""}</span></button>`).join("")}</div><button class="btn line" id="imnew" style="margin-top:12px">${ic("plus")}I’m new, create my profile</button><button class="linkbtn" data-me="">Just watching</button>`,
@@ -2435,8 +2461,9 @@ const ACT = {
   partner: v => { const d = holeDraft(ui.view), p = +v; if (d.mode==="partner" && d.partner===p){ d.mode = null; d.partner = null; } else { d.mode = "partner"; d.partner = p; } haptic(); syncPlay(); },
   lone: v => { const d = holeDraft(ui.view); if (d.mode===v){ d.mode = null; syncPlay(); return; } d.mode = v; d.partner = null; haptic(); syncPlay(); const S = round.settings, w = ENGINE.pname(round, d.wolf);
     takeover(v==="blind"?"Blind wolf":"Lone wolf", (v==="blind" ? `${w} calls it before anyone tees off. Win ${S.blindWin}, or each hunter takes ${S.blindLoss}.` : `${w} hunts alone. Win ${S.loneWin}, or each hunter takes ${S.loneLoss}.`) + (lineOf(round.players[d.wolf]) ? ` ${quote(lineOf(round.players[d.wolf]))}` : ""), wolfFull("px big")); },
-  inc: v => { const d = holeDraft(ui.view), p = +v; d.s[p] = Math.min(15, d.s[p]+1); haptic(); syncPlay(); bump($(`.srow[data-p="${p}"] .sv b`)); },
-  dec: v => { const d = holeDraft(ui.view), p = +v; d.s[p] = Math.max(1, d.s[p]-1); haptic(); syncPlay(); bump($(`.srow[data-p="${p}"] .sv b`)); },
+  na: v => { const d = holeDraft(ui.view), p = +v, on = d.s[p]!=null; if (!on) touch(p); d.s[p] = on ? null : +round.holes[ui.view].par; naSet(p, on); haptic(); syncPlay(); },
+  inc: v => { const d = holeDraft(ui.view), p = +v; touch(p); if (d.s[p]==null){ d.s[p] = +round.holes[ui.view].par; naSet(p,false); } else d.s[p] = Math.min(15, d.s[p]+1); haptic(); syncPlay(); bump($(`.srow[data-p="${p}"] .sv b`)); },
+  dec: v => { const d = holeDraft(ui.view), p = +v; touch(p); if (d.s[p]==null){ d.s[p] = +round.holes[ui.view].par; naSet(p,false); } else d.s[p] = Math.max(1, d.s[p]-1); haptic(); syncPlay(); bump($(`.srow[data-p="${p}"] .sv b`)); },
   tinc: v => { const d = holeDraft(ui.view), k = +v; d.t[k] = Math.min(15, d.t[k]+1); haptic(); syncPlay(); bump($(`.srow[data-t="${k}"] .sv b`)); },
   tdec: v => { const d = holeDraft(ui.view), k = +v; d.t[k] = Math.max(1, d.t[k]-1); haptic(); syncPlay(); bump($(`.srow[data-t="${k}"] .sv b`)); },
   pickS: v => { haptic(); pickScore(+v, false); }, pickT: v => { haptic(); pickScore(+v, true); },
