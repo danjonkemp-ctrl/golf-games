@@ -383,6 +383,14 @@ canvas#overlay{position:fixed;inset:0;width:100%;height:100%;z-index:65;pointer-
 #hmfold{display:none}
 /* scope, masters, rivals, badges, reactions */
 .seg.scope{margin:14px 0 4px}
+.tsw{display:flex;gap:6px;overflow-x:auto;margin:14px -16px 0;padding:0 16px 4px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.tsw::-webkit-scrollbar{display:none}
+.tsw.scope{margin-bottom:4px}
+.tsw button{flex:none;display:flex;align-items:center;gap:7px;height:38px;padding:0 12px;border-radius:9px;background:var(--card2);font:700 11.5px var(--mono);letter-spacing:.04em;color:var(--stone);white-space:nowrap;transition:background .2s,color .2s}
+.tsw button[aria-pressed="true"]{background:var(--lime);color:var(--midnight)}
+.tsw button i{width:10px;height:10px;border-radius:2px;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.tsw button svg{width:10px;height:10px}
+.jdot{display:block;width:14px;height:14px;border-radius:3px;flex:none}
 .mcard{display:flex;align-items:center;gap:10px;width:100%;margin:12px 0 0;padding:14px;border-radius:12px;background:linear-gradient(120deg,rgba(30,107,60,.35),var(--card) 70%);border:1.5px solid #1E6B3C;text-align:left}
 .mcard .mh{flex:none;width:96px}
 .mcard .mh b{display:block;font:700 13px/1.15 var(--pixel);color:var(--bone)}
@@ -830,17 +838,21 @@ const roundComplete = r => r.status==="done" || (r.holes.length>0 && played(r)==
 
 /* ---------- the Masters: a season league over finishing positions ---------- */
 /* guests never stop a round counting: the crew rule looks at everyone who isn't a guest */
-const crewOk = (r, set) => { const real = r.players.filter(p => !p.guest); return real.length>=3 && real.every(p => set.has(p.id)); };
+const crewOk = (r, set, min) => { const real = r.players.filter(p => !p.guest); return real.length>=(min||3) && real.every(p => set.has(p.id)); };
 /* a round is off the table only if someone switched it off. Older rounds with a guest were marked off automatically, so that mark is ignored */
 const switchedOff = r => !!(r.settings && r.settings.noMasters) || (r.league===false && r.players.every(p => !p.guest));
-function leagueRounds(rounds, members, start){
-  const set = new Set(members);
-  return rounds.filter(r => r && r.game==="wolf" && !switchedOff(r) && (r.createdAt||0) >= (start||0) && (r.manual || roundComplete(r))
-    && crewOk(r, set)).sort((a,b) => (a.createdAt||0)-(b.createdAt||0));
+/* each round can be switched off per tournament: settings.off[id] is true (someone switched it off), "auto" (it counted for a closer-fitting tournament instead) or false (count it) */
+const tourOff = (r, id) => { const v = ((r.settings && r.settings.off) || {})[id]; if (id==="main") return v ? true : (v===false ? false : switchedOff(r)); return !!v; };
+const tourCfg = o => { o = o || {}; const id = o.id || "main"; return { id, any:o.games==="any", min:o.min || (id==="main" ? 3 : 2), start:o.start||0, end:o.end||Infinity }; };
+function tourRounds(rounds, members, o){
+  const set = new Set(members), f = tourCfg(o);
+  return rounds.filter(r => r && (f.any || r.game==="wolf") && !tourOff(r, f.id) && (r.createdAt||0) >= f.start && (r.createdAt||0) <= f.end
+    && (r.manual ? (r.manual.t||"main")===f.id : roundComplete(r)) && crewOk(r, set, f.min)).sort((a,b) => (a.createdAt||0)-(b.createdAt||0));
 }
+const leagueRounds = (rounds, members, start) => tourRounds(rounds, members, { start });
 function leagueTable(rounds, members, opts){
-  const pts = (opts && opts.points) || [10,6,3,1], best = (opts && opts.best) || 0;
-  const list = leagueRounds(rounds, members, opts && opts.start), T = {};
+  const pts = (opts && opts.points) || [10,6,3,1], best = (opts && opts.best) || 0, any = !!(opts && opts.games==="any");
+  const list = tourRounds(rounds, members, opts), T = {};
   members.forEach(id => T[id] = { id, name:id, results:[], wins:0, wolfPts:0, played:0 });
   const weeks = list.map(r => {
     let c, pos;
@@ -852,9 +864,9 @@ function leagueTable(rounds, members, opts){
     const res = {};
     Object.entries(byPos).forEach(([k,ps]) => { k = +k; let s = 0; for (let j=0;j<ps.length;j++) s += pts[k-1+j]||0; const v = Math.round(s/ps.length*10)/10;
       ps.forEach(p => { const pl = r.players[p], o = T[pl.id] || (T[pl.id] = { id:pl.id, name:pl.name, results:[], wins:0, wolfPts:0, played:0 });
-        o.name = pl.name; const wp = (c.rows.find(x => x.players.includes(p))||{}).value||0;
+        o.name = pl.name; const wp = any ? 0 : ((c.rows.find(x => x.players.includes(p))||{}).value||0);
         o.results.push({ roundId:r.id, at:r.createdAt||0, pos:k, pts:v, wolfPts:wp }); o.played++; o.wolfPts += wp; if (k===1) o.wins++; res[pl.id] = { pos:k, pts:v }; }); });
-    return { roundId:r.id, at:r.createdAt||0, course:r.courseName, holes:r.holes.length, manual:!!r.manual, res };
+    return { roundId:r.id, at:r.createdAt||0, course:r.courseName, holes:r.holes.length, game:r.game, manual:!!r.manual, res };
   });
   const rows = Object.values(T).map(o => {
     const sorted = o.results.slice().sort((a,b) => b.pts-a.pts), counted = best ? sorted.slice(0,best) : sorted;
@@ -865,20 +877,22 @@ function leagueTable(rounds, members, opts){
   return { rows, weeks, leader, rounds:list.length, start:list.length?list[0].createdAt:null };
 }
 
-function leagueMisses(rounds, members, start){ // recent Wolf rounds that did not make the table, and why
-  const set = new Set(members), out = [];
-  rounds.filter(r => r && r.game==="wolf" && !r.manual).sort((a,b) => (b.createdAt||0)-(a.createdAt||0)).slice(0,12).forEach(r => {
-    const outsiders = r.players.filter(p => !p.guest && !set.has(p.id)), real = r.players.filter(p => !p.guest);
+function tourMisses(rounds, members, o){ // recent rounds that did not make a tournament table, and why
+  const set = new Set(members), f = tourCfg(o), main = f.id==="main", noun = (o && o.noun) || (main ? "crew" : "tournament"), out = [];
+  rounds.filter(r => r && (f.any || r.game==="wolf") && !r.manual && (r.createdAt||0) >= f.start && (r.createdAt||0) <= f.end).sort((a,b) => (b.createdAt||0)-(a.createdAt||0)).slice(0,12).forEach(r => {
+    const real = r.players.filter(p => !p.guest), outsiders = real.filter(p => !set.has(p.id)), inside = real.length-outsiders.length;
+    const flag = ((r.settings && r.settings.off) || {})[f.id];
     let reason = null, fix = null;
-    if (outsiders.length) { reason = `${outsiders.map(p => p.name).join(", ")} ${outsiders.length>1?"aren’t":"isn’t"} in the crew`; fix = real.length-outsiders.length>=3 ? "guest" : "crew"; }
-    else if (real.length<3) reason = "Needs at least three of the crew";
-    else if (switchedOff(r)) { reason = "“Counts for the Masters” was switched off"; fix = "count"; }
-    else if ((r.createdAt||0) < (start||0)) reason = "Played before the season start date";
+    if (outsiders.length) { if (inside < f.min) return; reason = `${outsiders.map(p => p.name).join(", ")} ${outsiders.length>1?"aren’t":"isn’t"} in the ${noun}`; fix = "guest"; }
+    else if (real.length < f.min) { if (!main) return; reason = "Needs at least three of the crew"; }
+    else if (flag==="auto") return; // it counted for a closer-fitting tournament instead
+    else if (tourOff(r, f.id)) { reason = main ? "“Counts for the Masters” was switched off" : "Switched off for this tournament"; fix = "count"; }
     else if (!roundComplete(r)) { reason = `Not finished, ${played(r)} of ${r.holes.length} holes saved`; fix = r.status==="live" ? "resume" : "finish"; }
-    if (reason) out.push({ id:r.id, at:r.createdAt||0, course:r.courseName, holes:r.holes.length, played:played(r), reason, fix, outsiders:outsiders.map(p=>p.id), canGuest: real.length-outsiders.length>=3, players:r.players.map(p=>p.name) });
+    if (reason) out.push({ id:r.id, at:r.createdAt||0, course:r.courseName, game:r.game, holes:r.holes.length, played:played(r), reason, fix, outsiders:outsiders.map(p=>p.id), canGuest: inside>=f.min, players:r.players.map(p=>p.name) });
   });
   return out;
 }
+const leagueMisses = (rounds, members, start) => tourMisses(rounds, members, { start });
 
 /* ---------- head to head ---------- */
 function headToHead(rounds, me){
@@ -934,7 +948,7 @@ function previewHole(r, i, h){
   return c.perHole[i];
 }
 
-const ENGINE = { crewOk, switchedOff, leagueMisses, JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
+const ENGINE = { tourOff, tourRounds, tourMisses, crewOk, switchedOff, leagueMisses, JUNK, STROKE_GAMES, SIXES_PAIRS, sixesSegs, sixesSegOf, positions, junkTotals, snakeState, roundComplete, leagueRounds, leagueTable, headToHead, BADGES, badgeStats, badgesFor, kindOf, KIND_LABEL, holeMoments, allMoments, playerStats, GAMES, GAME_ORDER, CLUBS, playerCountOk, isTeamGame, sides, sideName, pname, roundShots, shotsOn, playerShots, teamShots, netOf, compute, previewHole, wolfWho, wolfHole, played };
 
 
 /* ===================== SYDNEY COURSES =====================
@@ -1158,8 +1172,8 @@ function defaultAv(name){
   const h = hash(String(name||"?").toLowerCase().trim()), pick = (k, s) => AV_OPT[k][(h >>> s) % AV_OPT[k].length];
   return { skin:pick("skin",2), hair:["short","cap","long","bucket","visor"][(h>>>5)%5], hairC:pick("hairC",9), eyes:"dots", mouth:["smile","grin","flat"][(h>>>13)%3], face:["none","none","tache","beard"][(h>>>16)%4], acc:"none", shirt:pick("shirt",19), bg:"#2B2F33" };
 }
-let JACKET = null; // id of the player leading the Masters
-const avOf = p => ({ ...defaultAv(p && p.name), ...((p && p.av) || {}), jacket: !!(p && JACKET && p.id===JACKET) });
+let JACKETS = {}; // player id -> jacket colour, for whoever leads each running tournament
+const avOf = p => ({ ...defaultAv(p && p.name), ...((p && p.av) || {}), jacket: (p && JACKETS[p.id]) || null });
 function avGrid(a){
   const G = Array.from({length:12}, () => Array(12).fill("b"));
   const set = (x,y,c) => { if (x>=0 && x<12 && y>=0 && y<12) G[y][x] = c; };
@@ -1200,7 +1214,8 @@ function avGrid(a){
   if (ac==="earring"){ set(1,6,"y"); }
   if (ac==="headband"){ rect(2,3,9,3,"a"); }
   if (ac==="blush"){ set(3,6,"r"); set(8,6,"r"); }
-  const map = { J:"#1E6B3C", K:"#134A29", b:a.bg, c:a.shirt, s:a.skin, h:a.hairC, H:shade(a.hairC,.75), v:"#F2F2EA", d:shade(a.skin,.78), m:shade(a.skin,.5), e:"#0B0D0E", k:"#0B0D0E", w:"#F2F2EA", W:"#FFFFFF", f:"#F2F2EA", l:"#B7FF3B", y:"#E3C26B", a:"#FF5A3D", r:"#FF8FA0" };
+  const jc = typeof a.jacket==="string" ? a.jacket : "#1E6B3C";
+  const map = { J:jc, K:shade(jc,.7), b:a.bg, c:a.shirt, s:a.skin, h:a.hairC, H:shade(a.hairC,.75), v:"#F2F2EA", d:shade(a.skin,.78), m:shade(a.skin,.5), e:"#0B0D0E", k:"#0B0D0E", w:"#F2F2EA", W:"#FFFFFF", f:"#F2F2EA", l:"#B7FF3B", y:"#E3C26B", a:"#FF5A3D", r:"#FF8FA0" };
   return { rows:G.map(r => r.join("")), map };
 }
 function avSVG(a, cls="px"){ const g = avGrid(a); return pxSVG(g.rows, g.map, cls); }
@@ -1259,11 +1274,11 @@ async function CloudStore(cfg){
 /* ---------- state ---------- */
 let store = null, meta = null, round = null, history = [], unRound = null, activeId = null, sync = "local", lastSeen = 0;
 let me = localStorage.getItem(LSK.me);
-let ui = { tab:"home", sub:null, boardTab:"round", view:null, setup:null, scope:"all" };
+let ui = { tab:"home", sub:null, boardTab:"round", view:null, setup:null, scope:"all", tour:null };
 let drafts = {};
 const DEFAULT_CREW = () => ({ name:"Friday Crew", members:["dan","will","tom","ron"] });
 const DEFAULT_LEAGUE = () => ({ name:"Friday Wolf Masters", points:[10,6,3,1], best:10, start:null, seasons:[] });
-const DEFAULT_META = () => ({ crew:DEFAULT_CREW(), league:DEFAULT_LEAGUE(), reactions:{}, players:[{id:"dan",name:"Dan",hcp:0},{id:"will",name:"Will",hcp:0},{id:"tom",name:"Tom",hcp:0},{id:"ron",name:"Ron",hcp:0}], active:null, courses:{}, custom:[], lastCourse:"warringah" });
+const DEFAULT_META = () => ({ crew:DEFAULT_CREW(), league:DEFAULT_LEAGUE(), tournaments:{}, reactions:{}, players:[{id:"dan",name:"Dan",hcp:0},{id:"will",name:"Will",hcp:0},{id:"tom",name:"Tom",hcp:0},{id:"ron",name:"Ron",hcp:0}], active:null, courses:{}, custom:[], lastCourse:"warringah" });
 const roster = () => (meta && meta.players) || [];
 const rosterBy = id => roster().find(p => p.id===id);
 const myName = () => (rosterBy(me) || {}).name || "Someone";
@@ -1362,10 +1377,11 @@ function renderHome(){
   $$(".grow").forEach((el,k) => anim(el, [{ transform:"translateX(-10px)", opacity:0 }, { transform:"none", opacity:1 }], { duration:320, delay:60+k*40, easing:"cubic-bezier(.2,.8,.2,1)", fill:"backwards" }));
 }
 function mastersCard(){
-  const t = leagueNow(), L = leagueCfg(); if (!t.rounds) return "";
-  const top = t.rows.slice(0,3);
-  return `<button class="mcard" data-a="masters"><span class="mh"><b>${esc(L.name)}</b><small>${t.rounds} round${t.rounds===1?"":"s"} played</small></span>
-    <span class="podium">${top.map((o,k) => `<span class="pd p${k+1}">${avatar(personFor(o.id,o.name),"av")}<b>${esc(personFor(o.id,o.name).name)}</b><small>${o.total} pts</small></span>`).join("")}</span><span class="go">${ic("chev")}</span></button>`;
+  return tours().filter(T => (T.main || !me || T.members.includes(me)) && !(T.end && T.end < Date.now()-7*864e5)).map(T => {
+    const t = tourTable(T), top = t.rows.slice(0,3), st = `style="border-color:${T.jacket};background:linear-gradient(120deg,${T.jacket}59,var(--card) 70%)"`;
+    if (!t.rounds) return T.main ? "" : `<button class="mcard" data-a="masters" data-v="${T.id}" ${st}><span class="mh" style="width:auto;flex:1"><b>${esc(T.name)}</b><small>No rounds yet. The first finished round starts the table.</small></span><span class="go">${ic("chev")}</span></button>`;
+    return `<button class="mcard" data-a="masters" data-v="${T.id}" ${st}><span class="mh"><b>${esc(T.name)}</b><small>${t.rounds} round${t.rounds===1?"":"s"} played${isOver(T)?", finished":""}</small></span>
+    <span class="podium">${top.map((o,k) => `<span class="pd p${k+1}">${avatar(personFor(o.id,o.name),"av")}<b>${esc(personFor(o.id,o.name).name)}</b><small>${o.total} pts</small></span>`).join("")}</span><span class="go">${ic("chev")}</span></button>`; }).join("");
 }
 function leaderText(r, c){
   if (c.unit==="match") return c.status;
@@ -1373,7 +1389,7 @@ function leaderText(r, c){
   const top = c.rows[0]; return `${top.players.map(p=>ENGINE.pname(r,p)).join(" & ")} leads on ${top.text}${c.unit==="net"?"":" "+c.unit}`;
 }
 function histRow(r){
-  if (r.manual) return `<div class="hist"><span class="ic">${gameIcon("wolf")}</span><span><b>Wolf, ${esc(r.courseName||"past round")}</b><small>${new Date(r.createdAt||0).toLocaleDateString("en-AU",{day:"numeric",month:"short"})}, added by hand, ${r.players.map(p=>esc(p.name)).join(", ")}</small></span><span class="w">${esc((r.players.find(p=>r.manual.pos[p.id]===1)||{}).name||"")}</span></div>`;
+  if (r.manual) return `<div class="hist"><span class="ic">${gameIcon("wolf")}</span><span><b>${esc((r.manual.t && r.manual.t!=="main" && (tours().find(t => t.id===r.manual.t)||{}).name) || "Wolf")}, ${esc(r.courseName||"past round")}</b><small>${new Date(r.createdAt||0).toLocaleDateString("en-AU",{day:"numeric",month:"short"})}, added by hand, ${r.players.map(p=>esc(p.name)).join(", ")}</small></span><span class="w">${esc((r.players.find(p=>r.manual.pos[p.id]===1)||{}).name||"")}</span></div>`;
   const names = (r.winners||[]).map(id => (r.players.find(p=>p.id===id)||{}).name).filter(Boolean);
   const d = new Date(r.createdAt||0);
   return `<div class="hist"><span class="ic">${gameIcon(r.game)}</span><span><b>${esc(GAMES[r.game]?GAMES[r.game].name:r.game)}, ${esc(r.courseName)}</b><small>${d.toLocaleDateString("en-AU",{day:"numeric",month:"short"})}, ${r.holes.length} holes, ${r.players.map(p=>esc(p.name)).join(", ")}</small></span><span class="w">${names.length?esc(names.join(" & ")):"Halved"}</span></div>`;
@@ -1416,8 +1432,8 @@ function newSetup(game){
   const courseId = (prev && prev.courseId) || (meta && meta.lastCourse) || "warringah";
   const clubs = {}; if (prev) prev.players.forEach(p => { if (p.clubs) clubs[p.id] = p.clubs; });
   const prevSame = real.find(r => r.game===game);
-  return { game, sel, courseId, holesMode: prev ? prev.holesMode : "18", useHcp: prev ? !!prev.useHcp : false, league:true,
-    settings: { junk:[], snake:false, snakeValue:0, ...g.defaults, ...(prevSame ? prevSame.settings : {}) }, clubs };
+  return { game, sel, courseId, holesMode: prev ? prev.holesMode : "18", useHcp: prev ? !!prev.useHcp : false, tours:{},
+    settings: { junk:[], snake:false, snakeValue:0, ...g.defaults, ...(prevSame ? prevSame.settings : {}), off:undefined, noMasters:undefined }, clubs };
 }
 function setupProblem(s){
   const g = GAMES[s.game];
@@ -1450,7 +1466,7 @@ function renderSetup(){
   <div class="seg">${modes.map(([v,l]) => `<button data-a="mode" data-v="${v}" aria-pressed="${s.holesMode===v}">${l}</button>`).join("")}</div>
   <div class="lab">Options</div>
   <label class="opt"><span>Use handicaps<small>Shots given on the hardest holes first</small></span><input type="checkbox" class="sw" data-a="hcp" ${s.useHcp?"checked":""}></label>
-  ${crewMatch(s.sel) && s.game==="wolf" ? `<label class="opt"><span>Counts for the ${esc(leagueCfg().name)}<small>${s.sel.some(id=>String(id).startsWith("guest-"))?"Guests play for fun and stay off the table":`All ${esc(crewCfg().name)}, so it goes on the season table`}</small></span><input type="checkbox" class="sw" data-a="league" ${s.league!==false?"checked":""}></label>` : ""}
+  ${setupTours(s).map(x => `<label class="opt"><span>Counts for the ${esc(x.t.name)}<small>${!x.fits ? `Off to start with, because ${esc(x.closest)} is a closer fit for this group` : s.sel.some(id=>String(id).startsWith("guest-")) ? "Guests play for fun and stay off the table" : x.t.main ? `All ${esc(x.t.group)}, so it goes on the table` : "Everyone playing is in it, so it goes on the table"}</small></span><input type="checkbox" class="sw" data-a="tourOpt" data-v="${x.t.id}" ${x.on?"checked":""}></label>`).join("")}
   ${OPTS[s.game].map(([k,l,sub,isBool]) => isBool
     ? `<label class="opt"><span>${l}<small>${sub}</small></span><input type="checkbox" class="sw" data-a="optB" data-v="${k}" ${s.settings[k]?"checked":""}></label>`
     : `<div class="opt"><span>${l}<small>${sub}</small></span><div class="num"><button data-a="optN" data-v="${k}|-1" aria-label="Less">${ic("minus")}</button><output>${MONEY_KEYS[k]?"$":""}${+s.settings[k]}</output><button data-a="optN" data-v="${k}|1" aria-label="More">${ic("plus")}</button></div></div>`).join("")}`;
@@ -1671,7 +1687,7 @@ function statsView(){
   const rounds = scopedRounds(), st = ENGINE.playerStats(rounds);
   if (!st.length) return `<div class="status">Stats build up from every hole you save. Play a few holes and they’ll appear here.</div>`;
   const tile = (v,l,cls="") => `<div class="tile ${cls}"><b>${v}</b><span>${l}</span></div>`;
-  const champs = (leagueCfg().seasons||[]).map(x => x.champion && x.champion.id);
+  const champs = champIds();
   const jt = {}; rounds.forEach(r => { const t = ENGINE.junkTotals(r); r.players.forEach((p,i) => { if (p.guest) return; const o = jt[p.id] = jt[p.id] || { total:0 }; Object.entries(t[i]).forEach(([k,v]) => o[k] = (o[k]||0)+v); }); });
   return winsTable(rounds) + rivalsView(rounds) + `<div class="cap sect">Player cards</div>` + st.map(s => {
     const p = personFor(s.id, s.name), b = ENGINE.badgesFor(rounds, s.id, champs), got = b.filter(x => x.got), j = jt[s.id] || { total:0 };
@@ -1683,7 +1699,7 @@ function statsView(){
   + `<div class="cap sect">Every round</div>${rounds.filter(r=>ENGINE.roundComplete(r)).slice(0,40).map(histRow).join("") || `<div class="status">Finished rounds land here.</div>`}`;
 }
 function momentsView(){
-  const all = ENGINE.allMoments(scopedRounds()).filter(m => ui.scope!=="crew" || !m.guest), gold = all.filter(m => m.kind!=="shitshow"), shows = all.filter(m => m.kind==="shitshow");
+  const all = ENGINE.allMoments(scopedRounds()).filter(m => !ui.scope || ui.scope==="all" || !m.guest), gold = all.filter(m => m.kind!=="shitshow"), shows = all.filter(m => m.kind==="shitshow");
   const row = m => { const p = m.players.length>1 ? null : personFor(m.ids[0], m.names[0]);
     return `<div class="mom ${m.kind}"><span class="mic">${m.kind==="shitshow"?pooIc():starIc()}</span>${p?avatar(p,"av sm"):""}<span class="mt"><b>${esc(m.names.join(" & "))}${m.guest?` <em>guest</em>`:""}</b><small>${m.g} on the par ${m.par} ${nth(m.n)}, ${esc(m.course)}, ${fmtDate(m.at)}</small></span><span class="mk">${esc(ENGINE.KIND_LABEL[m.kind])}</span>${reactBar(m)}</div>`; };
   const board = {};
@@ -1698,12 +1714,39 @@ function momentsView(){
 /* ---------- crew, Masters, rivals, side games, reactions ---------- */
 const crewCfg = () => ({ ...DEFAULT_CREW(), ...((meta && meta.crew) || {}) });
 const leagueCfg = () => ({ ...DEFAULT_LEAGUE(), ...((meta && meta.league) || {}) });
-const crewMatch = ids => { const m = new Set(crewCfg().members), real = ids.filter(id => !String(id).startsWith("guest-")); return real.length>=3 && real.every(id => m.has(id)); };
-const inCrew = r => ENGINE.crewOk(r, new Set(crewCfg().members));
-function scopedRounds(){ const all = playedRounds(); return ui.scope==="crew" ? all.filter(inCrew) : all; }
-function scopeSwitch(){ return `<div class="seg scope"><button data-a="scope" data-v="all" aria-pressed="${ui.scope!=="crew"}">Everyone</button><button data-a="scope" data-v="crew" aria-pressed="${ui.scope==="crew"}">${esc(crewCfg().name)}</button></div>`; }
-function leagueNow(){ const L = leagueCfg(); return ENGINE.leagueTable(playedRounds().concat(history.filter(r => r.manual)), crewCfg().members, { points:L.points, best:L.best, start:L.start||0 }); }
-function refreshJacket(){ try { JACKET = meta ? leagueNow().leader : null; } catch(e){ JACKET = null; } }
+/* ---------- tournaments: the Masters is the first one, and anyone can add more ---------- */
+const JACKET_COLOURS = [["#1E6B3C","Green"],["#B8232F","Red"],["#2456C9","Blue"],["#C99A1E","Gold"],["#7A3FB8","Purple"],["#D9581A","Orange"]];
+function tours(){
+  const L = leagueCfg(), C = crewCfg();
+  const main = { id:"main", main:true, name:L.name, group:C.name, members:(C.members||[]).slice(), games:"wolf", points:L.points, best:L.best||0, start:L.start||0, end:null, seasons:L.seasons||[], jacket:L.jacket||"#1E6B3C", min:3 };
+  const extra = Object.values((meta && meta.tournaments) || {}).filter(t => t && t.id && t.name && Array.isArray(t.members)).sort((a,b) => (a.createdAt||0)-(b.createdAt||0))
+    .map(t => ({ points:[10,6,3,1], best:0, games:"any", jacket:"#B8232F", ...t, seasons:[], start:t.start||0, end:t.end||null, min:2, group:t.name, main:false }));
+  return [main].concat(extra);
+}
+const tourBy = id => { const list = tours(); return list.find(t => t.id===id) || list[0]; };
+function curTour(){ const list = tours(); return list.find(t => t.id===ui.tour) || (me && list.find(t => t.members.includes(me))) || list[0]; }
+const isOver = (t, at) => !!t.end && t.end < (at||Date.now());
+const tourOpts = t => ({ id:t.id, games:t.games, min:t.min, points:t.points, best:t.best, start:t.start||0, end:t.end||null });
+function tourTable(t, exceptId){ const rs = playedRounds().concat(history.filter(r => r.manual)); return ENGINE.leagueTable(exceptId ? rs.filter(r => r.id!==exceptId) : rs, t.members, tourOpts(t)); }
+const leagueNow = () => tourTable(tourBy("main"));
+function refreshJacket(){ const m = {}; try { if (meta) tours().slice().reverse().forEach(t => { if (isOver(t)) return; const l = tourTable(t).leader; if (l) m[l] = t.jacket; }); } catch(e){} JACKETS = m; }
+function champIds(){ const ids = (leagueCfg().seasons||[]).map(x => x.champion && x.champion.id); tours().forEach(t => { if (!t.main && isOver(t)){ const l = tourTable(t).leader; if (l) ids.push(l); } }); return ids.filter(Boolean); }
+/* which tournaments a new round would count for. When more than one fits, the one with the fewest players is the closest fit and the others start switched off */
+function setupTours(s){
+  const now = Date.now(), real = s.sel.filter(id => !String(id).startsWith("guest-"));
+  const list = tours().filter(t => !isOver(t, now) && (t.start||0) <= now && (t.games==="any" || s.game==="wolf") && real.length>=t.min && real.every(id => t.members.includes(id)));
+  if (!list.length) return [];
+  const least = Math.min(...list.map(t => t.members.length)), closest = list.find(t => t.members.length===least);
+  return list.map(t => { const fits = t.members.length===least; return { t, fits, closest:closest.name, on:(s.tours && t.id in s.tours) ? !!s.tours[t.id] : fits }; });
+}
+const scopeId = () => ui.scope==="crew" ? "main" : (ui.scope||"all");
+function scopedRounds(){ const all = playedRounds(), t = tours().find(x => x.id===scopeId()); if (!t) return all; const set = new Set(t.members); return all.filter(r => ENGINE.crewOk(r, set, t.min)); }
+function scopeSwitch(){
+  const list = tours().filter(t => t.main || !me || t.members.includes(me)), cur = tours().some(t => t.id===scopeId()) ? scopeId() : "all";
+  const btn = (v,l) => `<button data-a="scope" data-v="${v}" aria-pressed="${cur===v}">${esc(l)}</button>`;
+  return list.length<=1 ? `<div class="seg scope">${btn("all","Everyone")}${btn("main",list[0].group)}</div>` : `<div class="tsw scope">${btn("all","Everyone")}${list.map(t => btn(t.id,t.group)).join("")}</div>`;
+}
+function tourSwitch(){ const cur = curTour().id; return `<div class="tsw">${tours().map(t => `<button data-a="tour" data-v="${t.id}" aria-pressed="${t.id===cur}"><i style="background:${t.jacket}"></i>${esc(t.name)}</button>`).join("")}<button data-a="newTour">${ic("plus")}New</button></div>`; }
 function winsTable(rounds){
   const done = rounds.filter(ENGINE.roundComplete), st = {};
   done.forEach(r => { const c = ENGINE.compute(r); r.players.forEach((p,i) => { if (p.guest) return; const s = st[p.id] || (st[p.id] = { p:personFor(p.id,p.name), played:0, wins:0 }); s.played++; if (c.winners.includes(i)) s.wins++; }); });
@@ -1725,26 +1768,29 @@ function sideGamesPanel(r){
   return `<div class="panel" style="margin-top:12px">${(S.junk||[]).length ? `<div class="cap" style="margin-bottom:8px">Junk</div>${r.players.map((p,i)=>({p,i,t:jt[i]})).sort((a,b)=>b.t.total-a.t.total).map(({p,t}) => `<div class="bet"><span style="display:flex;gap:10px;align-items:center">${avatar(p,"av sm")}${esc(p.name)}</span><span class="dim">${S.junk.filter(k=>t[k]).map(k=>`${ENGINE.JUNK[k]} ${t[k]}`).join(", ")||"None yet"}</span><b>${t.total}</b></div>`).join("")}` : ""}
   ${S.snake ? `<div class="banner snakeb" style="margin:12px 0 0"><span class="ic">${snakeIc()}</span><span>${sn.holder>=0?`<b>${esc(r.players[sn.holder].name)}</b> holds the snake`:"Nobody has the snake"}. ${sn.total} three putt${sn.total===1?"":"s"}${+S.snakeValue?`, pot $${sn.total*S.snakeValue}`:""}.</span></div>` : ""}</div>`;
 }
-function missesView(){
-  const L = leagueCfg(), C = crewCfg(), m = ENGINE.leagueMisses(playedRounds(), C.members, L.start||0);
+function missesView(T){
+  const all = playedRounds(), elsewhere = new Set(); // a round with someone from outside is not worth flagging when it already sits on another tournament's table
+  tours().forEach(o => { if (o.id!==T.id) ENGINE.tourRounds(all, o.members, tourOpts(o)).forEach(r => elsewhere.add(r.id)); });
+  const m = ENGINE.tourMisses(all, T.members, { ...tourOpts(T), noun:T.main ? "crew" : "tournament" }).filter(x => !(x.fix==="guest" && elsewhere.has(x.id)));
   if (!m.length) return "";
-  const label = { crew:"Add to crew", guest:"Treat as guest", count:"Count it", finish:"Count it", resume:"Go to round" };
-  const btns = x => x.fix==="guest" ? `<span class="mfix"><button class="chip" data-a="missFix" data-v="${x.id}|guest">Treat as guest</button><button class="chip ghost" data-a="missFix" data-v="${x.id}|crew">Add to crew</button></span>` : x.fix ? `<button class="chip" data-a="missFix" data-v="${x.id}|${x.fix}">${label[x.fix]}</button>` : "";
-  return `<div class="cap sect">Didn’t count</div>${m.map(x => `<div class="miss"><span><b>${fmtDate(x.at)}, ${esc(x.course)}, ${x.holes} holes</b><small>${esc(x.players.join(", "))}</small><em>${esc(x.reason)}</em></span>${btns(x)}</div>`).join("")}`;
+  const label = { crew:T.main ? "Add to crew" : "Add player", guest:"Treat as guest", count:"Count it", finish:"Count it", resume:"Go to round" };
+  const btns = x => x.fix==="guest" ? `<span class="mfix"><button class="chip" data-a="missFix" data-v="${x.id}|guest|${T.id}">Treat as guest</button><button class="chip ghost" data-a="missFix" data-v="${x.id}|crew|${T.id}">${label.crew}</button></span>` : x.fix ? `<button class="chip" data-a="missFix" data-v="${x.id}|${x.fix}|${T.id}">${label[x.fix]}</button>` : "";
+  return `<div class="cap sect">Didn’t count</div>${m.map(x => `<div class="miss"><span><b>${fmtDate(x.at)}, ${T.main?"":esc(GAMES[x.game].name)+", "}${esc(x.course)}, ${x.holes} holes</b><small>${esc(x.players.join(", "))}</small><em>${esc(x.reason)}</em></span>${btns(x)}</div>`).join("")}`;
 }
 function fixMiss(v){
-  const [id, fix] = v.split("|"), r = playedRounds().find(x => x.id===id); if (!r) return;
+  const [id, fix, tid] = v.split("|"), r = playedRounds().find(x => x.id===id), T = tourBy(tid||"main"); if (!r) return;
+  const local = patch => { Object.assign(r, patch); const h = history.find(x => x.id===r.id); if (h && h!==r) Object.assign(h, patch); };
+  const countOn = () => ({ ...(r.settings||{}), noMasters: T.main ? false : !!(r.settings||{}).noMasters, off:{ ...((r.settings||{}).off||{}), [T.id]:false } });
   if (fix==="resume"){ ui.view = null; go("play"); return; }
   if (fix==="guest"){
-    const C = crewCfg(), out = r.players.filter(p => !p.guest && !C.members.includes(p.id)), names = out.map(p => p.name).join(" and ");
+    const out = r.players.filter(p => !p.guest && !T.members.includes(p.id)), names = out.map(p => p.name).join(" and ");
     const apply = remove => {
-      const ids = out.map(p => p.id), players = r.players.map(p => ids.includes(p.id) ? { ...p, guest:true } : p);
-      store.saveRound(r.id, { players, league:true, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} made ${names} a guest` });
-      r.players = players; r.league = true; const h = history.find(x => x.id===r.id); if (h){ h.players = players; h.league = true; }
+      const ids = out.map(p => p.id), players = r.players.map(p => ids.includes(p.id) ? { ...p, guest:true } : p), patch = { players, league:true, settings:countOn(), updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} made ${names} a guest` };
+      store.saveRound(r.id, patch); local(patch);
       if (remove){ const list = roster().filter(p => !ids.includes(p.id)); meta.players = list; store.saveMeta({ players:list }); }
-      closeSheet(); toast(remove ? `${names} is a guest now and off your players list` : `${names} is a guest. Round added to the Masters`); render({ keepScroll:true });
+      closeSheet(); toast(remove ? `${names} is a guest now and off your players list` : `${names} is a guest. Round added to the ${T.name}`); render({ keepScroll:true });
     };
-    openSheet(`<h3>Treat ${esc(names)} as a guest?</h3><p>Only for this round. It counts for the ${esc(leagueCfg().name)}, positions are worked out among the crew, and ${esc(names)} stays off the table. The scores don’t change.</p>
+    openSheet(`<h3>Treat ${esc(names)} as a guest?</h3><p>Only for this round. It counts for the ${esc(T.name)}, positions are worked out among its players, and ${esc(names)} stays off the table. The scores don’t change.</p>
       <button class="btn go" id="gst">Treat as guest</button>
       <button class="btn line" id="gstx" style="margin-top:10px">Guest, and remove from Players</button>
       <p class="legend">Removing them from Players means they won’t show when you pick players. Their scores stay in this round.</p>
@@ -1753,33 +1799,43 @@ function fixMiss(v){
     return;
   }
   if (fix==="crew"){
-    const C = crewCfg(), add = r.players.filter(p => !p.guest && !C.members.includes(p.id)).map(p => p.id);
-    openSheet(`<h3>Add to the ${esc(C.name)}?</h3><p>${esc(add.map(id => personFor(id,"").name).join(", "))} will join the crew, and every Wolf round where everyone playing is in the crew will count. If this is someone playing under a second profile by mistake, it’s better to remove that profile from Players instead.</p><button class="btn go" id="addc">Add to the crew</button><button class="linkbtn" id="noc">Cancel</button>`, sh => {
+    const add = r.players.filter(p => !p.guest && !T.members.includes(p.id)).map(p => p.id);
+    openSheet(`<h3>Add to the ${esc(T.main ? T.group : T.name)}?</h3><p>${esc(add.map(id => personFor(id,"").name).join(", "))} will join, and every ${T.games==="any"?"":"Wolf "}round where everyone playing is in the ${T.main?"crew":"tournament"} will count. If this is someone playing under a second profile by mistake, it’s better to remove that profile from Players instead.</p><button class="btn go" id="addc">Add</button><button class="linkbtn" id="noc">Cancel</button>`, sh => {
       sh.querySelector("#noc").onclick = closeSheet;
-      sh.querySelector("#addc").onclick = () => { const crew = { ...C, members:C.members.concat(add) }; meta.crew = crew; store.saveMeta({ crew }); if (r.league===false){ store.saveRound(r.id, { league:true, updatedAt:Date.now() }); r.league = true; const h = history.find(x => x.id===r.id); if (h) h.league = true; } closeSheet(); toast("Crew updated"); render({ keepScroll:true }); }; });
+      sh.querySelector("#addc").onclick = () => {
+        const members = T.members.concat(add);
+        if (T.main){ const crew = { ...crewCfg(), members }; meta.crew = crew; store.saveMeta({ crew }); }
+        else { meta.tournaments = { ...(meta.tournaments||{}), [T.id]:{ ...meta.tournaments[T.id], members } }; store.saveMeta({ tournaments:{ [T.id]:{ members } } }); }
+        if (ENGINE.tourOff(r, T.id)){ const patch = { league:true, settings:countOn(), updatedAt:Date.now() }; store.saveRound(r.id, patch); local(patch); }
+        closeSheet(); toast(`${T.main ? T.group : T.name} updated`); render({ keepScroll:true }); }; });
     return;
   }
   const partial = fix==="finish" && !ENGINE.roundComplete(r);
-  holdSheet("Count this round?", partial ? `Only ${ENGINE.played(r)} of ${r.holes.length} holes were saved. It will count on the ${leagueCfg().name} using the holes you saved.` : `It will go on the ${leagueCfg().name} table.`, "Hold to count it", () => {
-    const winners = ENGINE.compute(r).winners.map(p => r.players[p].id), patch = { league:true, settings:{ ...(r.settings||{}), noMasters:false }, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} added a round to the Masters` };
+  holdSheet("Count this round?", partial ? `Only ${ENGINE.played(r)} of ${r.holes.length} holes were saved. It will count on the ${T.name} using the holes you saved.` : `It will go on the ${T.name} table.`, "Hold to count it", () => {
+    const winners = ENGINE.compute(r).winners.map(p => r.players[p].id), patch = { league:true, settings:countOn(), updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} added a round to the ${T.name}` };
     if (partial) { patch.status = "done"; patch.winners = winners; }
-    store.saveRound(r.id, patch); Object.assign(r, patch); const h = history.find(x => x.id===r.id); if (h) Object.assign(h, patch);
-    closeSheet(); toast("Round added to the Masters"); render({ keepScroll:true });
+    store.saveRound(r.id, patch); local(patch);
+    closeSheet(); toast(`Round added to the ${T.name}`); render({ keepScroll:true });
   });
 }
 function mastersView(){
-  const L = leagueCfg(), C = crewCfg(), t = leagueNow(), pts = L.points;
-  const head = `<div class="mhead"><span class="mic" style="width:38px;height:36px">${wolfFull()}</span><div><h2>${esc(L.name)}</h2><p>${esc(C.name)}: ${C.members.map(id=>esc((rosterBy(id)||{name:id}).name)).join(", ")}. ${t.rounds} round${t.rounds===1?"":"s"}${t.start?` since ${fmtDate(t.start)}`:""}.</p></div></div>`;
-  if (!t.rounds) return head + `<div class="status">The table starts with your first finished Wolf round where everyone playing is in the ${esc(C.name)}. Three or more of you, nobody else. Played some Fridays before the app kept every round? Add them below.</div>${missesView()}<div style="display:grid;gap:10px;margin-top:14px"><button class="btn line" data-a="pastRound">${ic("plus")}Add a past round</button><button class="btn line" data-a="leagueCfg">Masters settings</button></div>`;
+  const T = curTour(), t = tourTable(T), pts = T.points, over = isOver(T), wolfOnly = T.games!=="any";
+  const names = T.members.map(id=>esc((rosterBy(id)||{name:id}).name)).join(", ");
+  const span = T.end ? (T.start && fmtDate(T.start)===fmtDate(T.end) ? `, ${fmtDate(T.end)}` : `, ${T.start?fmtDate(T.start)+" to ":"until "}${fmtDate(T.end)}`) : T.start ? `, from ${fmtDate(T.start)}` : "";
+  const sub = T.main ? `${esc(T.group)}: ${names}. ${t.rounds} round${t.rounds===1?"":"s"}${t.start?` since ${fmtDate(t.start)}`:""}.` : `${names}. ${wolfOnly?"Wolf only":"Every game counts"}. ${t.rounds} round${t.rounds===1?"":"s"}${span}${over?", finished":""}.`;
+  const head = tourSwitch() + `<div class="mhead"><span class="mic" style="width:38px;height:36px">${wolfFull()}</span><div><h2>${esc(T.name)}</h2><p>${sub}</p></div></div>`;
+  const foot = `<div style="display:grid;gap:10px;margin-top:18px"><button class="btn line" data-a="pastRound">${ic("plus")}Add a past round</button><button class="btn line" data-a="leagueCfg">${T.main?"Masters settings":"Tournament settings"}</button></div>`;
+  if (!t.rounds) return head + `<div class="status">${T.main ? `The table starts with your first finished Wolf round where everyone playing is in the ${esc(T.group)}. Three or more of you. Guests can join in and stay off the table. Played some Fridays before the app kept every round? Add them below.` : `The table starts with the first finished ${wolfOnly?"Wolf round":"round of any game"} where everyone playing is one of these players. Two or more of you. Guests can join in and stay off the table.`}</div>${missesView(T)}${foot}`;
   const leader = t.rows[0], second = t.rows[1], lead = leader && second ? Math.round((leader.total-second.total)*10)/10 : 0;
-  const jacket = t.leader ? `<div class="jacket"><span class="av lg">${avSVG(avOf(personFor(t.leader, leader.name)))}</span><div><b>${esc(personFor(t.leader,leader.name).name)} wears the jacket</b><small>${lead>0?`${lead} pts clear`:"Level on points, ahead on wins"}. ${leader.wins} win${leader.wins===1?"":"s"} this season.</small></div></div>` : `<div class="jacket"><div><b>The jacket is up for grabs</b><small>Too close to call at the top.</small></div></div>`;
+  const jst = `style="border-color:${T.jacket};background:linear-gradient(120deg,${T.jacket}73,var(--card) 75%)"`, lp = t.leader && personFor(t.leader, leader.name);
+  const jacket = t.leader ? `<div class="jacket" ${jst}><span class="av lg">${avSVG({ ...avOf(lp), jacket:T.jacket })}</span><div><b>${esc(lp.name)} ${over?`won the ${esc(T.name)}`:"wears the jacket"}</b><small>${lead>0?`${lead} pts clear`:"Level on points, ahead on wins"}. ${leader.wins} win${leader.wins===1?"":"s"} ${T.main?"this season":over?"in all":"so far"}.</small></div></div>` : `<div class="jacket" ${jst}><div><b>${over?"Finished level at the top":"The jacket is up for grabs"}</b><small>Too close to call at the top.</small></div></div>`;
   const posTxt = k => k ? nth(k) : "";
   const table = `<div class="lbh" style="grid-template-columns:34px 1fr auto"><span>Pos</span><span>Player</span><span>Points</span></div><ul class="lb">${t.rows.map((o,k) => { const p = personFor(o.id,o.name);
-    return `<li class="${k===0&&t.leader?"first":""}"><span class="n">${k+1}</span><span class="who">${avatar(p,"av sm")}<span style="min-width:0"><b>${esc(p.id===me?"You":p.name)}</b><small>${o.played} played, ${o.wins} win${o.wins===1?"":"s"}, ${o.wolfPts} wolf pts</small><span class="form">${o.form.map(f=>`<i class="f${f}">${f}</i>`).join("")}</span></span></span><span class="v">${o.total}${L.best&&o.played>L.best?`<small>best ${L.best}</small>`:"<small>pts</small>"}</span></li>`; }).join("")}</ul>`;
-  const weeks = `<div class="cap sect">Week by week</div><div class="grid panel"><table><tr><th>Round</th>${t.rows.map(o=>`<th>${esc((personFor(o.id,o.name).name||"").slice(0,5))}</th>`).join("")}</tr>${t.weeks.slice().reverse().map(w => `<tr class="wk"><td>${fmtDate(w.at)}<small style="display:block;color:var(--stone);font-weight:500">${w.manual?"Added by hand":`${esc(w.course)}, ${w.holes}`}</small></td>${t.rows.map(o => { const x = w.res[o.id]; return `<td>${x?`<span class="c ${x.pos===1?"pt":""}">${posTxt(x.pos)}</span>`:`<span class="dim">·</span>`}</td>`; }).join("")}</tr>`).join("")}</table></div>
-    <p class="legend">Points for finishing ${pts.map((p,k)=>`${nth(k+1)} ${p}`).join(", ")}. Ties share the points.${L.best?` Your best ${L.best} rounds count.`:""}</p>`;
-  const fame = (L.seasons||[]).length ? `<div class="cap sect">Hall of Fame</div>${L.seasons.slice().reverse().map(s => `<div class="hist"><span class="ic">${pxSVG(ICON.trophy,{"#":"#F2C94C"})}</span><span><b>${esc(s.name)}</b><small>${fmtDate(s.start)} to ${fmtDate(s.end)}, ${s.rounds} rounds</small></span><span class="w">${esc(s.champion?s.champion.name:"No champion")}</span></div>`).join("")}` : "";
-  return head + jacket + table + weeks + missesView() + fame + `<div style="display:grid;gap:10px;margin-top:18px"><button class="btn line" data-a="pastRound">${ic("plus")}Add a past round</button><button class="btn line" data-a="leagueCfg">Masters settings</button></div>`;
+    return `<li class="${k===0&&t.leader?"first":""}"><span class="n">${k+1}</span><span class="who">${avatar(p,"av sm")}<span style="min-width:0"><b>${esc(p.id===me?"You":p.name)}</b><small>${o.played} played, ${o.wins} win${o.wins===1?"":"s"}${wolfOnly?`, ${o.wolfPts} wolf pts`:""}</small><span class="form">${o.form.map(f=>`<i class="f${f}">${f}</i>`).join("")}</span></span></span><span class="v">${o.total}${T.best&&o.played>T.best?`<small>best ${T.best}</small>`:"<small>pts</small>"}</span></li>`; }).join("")}</ul>`;
+  const weeks = `<div class="cap sect">${T.main?"Week by week":"Round by round"}</div><div class="grid panel"><table><tr><th>Round</th>${t.rows.map(o=>`<th>${esc((personFor(o.id,o.name).name||"").slice(0,5))}</th>`).join("")}</tr>${t.weeks.slice().reverse().map(w => `<tr class="wk"><td>${fmtDate(w.at)}<small style="display:block;color:var(--stone);font-weight:500">${w.manual?"Added by hand":wolfOnly?`${esc(w.course)}, ${w.holes}`:esc(GAMES[w.game].name)}</small></td>${t.rows.map(o => { const x = w.res[o.id]; return `<td>${x?`<span class="c ${x.pos===1?"pt":""}">${posTxt(x.pos)}</span>`:`<span class="dim">·</span>`}</td>`; }).join("")}</tr>`).join("")}</table></div>
+    <p class="legend">Points for finishing ${pts.map((p,k)=>`${nth(k+1)} ${p}`).join(", ")}. Ties share the points.${T.best?` Your best ${T.best} rounds count.`:""}</p>`;
+  const fame = (T.seasons||[]).length ? `<div class="cap sect">Hall of Fame</div>${T.seasons.slice().reverse().map(s => `<div class="hist"><span class="ic">${pxSVG(ICON.trophy,{"#":"#F2C94C"})}</span><span><b>${esc(s.name)}</b><small>${fmtDate(s.start)} to ${fmtDate(s.end)}, ${s.rounds} rounds</small></span><span class="w">${esc(s.champion?s.champion.name:"No champion")}</span></div>`).join("")}` : "";
+  return head + jacket + table + weeks + missesView(T) + fame + foot;
 }
 const momentKey = m => `${m.roundId}:${m.i}:${m.ids.join("+")}`;
 const REACTS = ["😂","👏","🔥","💀","🐍"];
@@ -1820,7 +1876,7 @@ function renderMenu(){
   <button class="mi" data-a="myav"><span style="display:flex;align-items:center;gap:12px">${me&&rosterBy(me)?avatar(rosterBy(me),"av"):""}<span>Design your avatar<small>${me&&rosterBy(me)&&lineOf(rosterBy(me))?esc(quote(lineOf(rosterBy(me)))):"Pick a look and a catchline"}</small></span></span><span class="go">${ic("chev")}</span></button>
   <button class="mi" data-a="players"><span>Players and handicaps<small>${roster().length} in the group</small></span><span class="go">${ic("chev")}</span></button>
   <button class="mi" data-a="courses"><span>Courses and scorecards<small>${allCourses().length} Sydney courses</small></span><span class="go">${ic("chev")}</span></button>
-  <button class="mi" data-a="leagueCfg"><span>${esc(crewCfg().name)} and the Masters<small>Who’s in, season settings, Hall of Fame</small></span><span class="go">${ic("chev")}</span></button>
+  <button class="mi" data-a="tourList"><span>Tournaments<small>${tours().length===1?"The Masters, and create your own":`${tours().length} set up, create your own`}</small></span><span class="go">${ic("chev")}</span></button>
   <button class="mi" data-a="rulesAll"><span>How the games work<small>Rules for all ${GAME_ORDER.length} games</small></span><span class="go">${ic("chev")}</span></button>
   <label class="mi"><span>Keep screen awake<small>Stops your phone locking mid round</small></span><input type="checkbox" class="sw" data-a="awake" ${awake?"checked":""}></label>
   </div>
@@ -1995,67 +2051,105 @@ function holdToConfirm(btn, done, ms=2000){
 
 /* ---------- Masters settings ---------- */
 const POINT_SETS = [[10,6,3,1],[5,3,2,1],[4,3,2,1],[3,2,1,0]];
-function leagueSheet(){
-  const L = leagueCfg(), C = crewCfg(); let members = C.members.slice(), points = L.points.slice(), best = L.best||0;
-  const dateVal = L.start ? new Date(L.start).toISOString().slice(0,10) : "";
-  const body = () => `<h3>${esc(C.name)} and the Masters</h3><p>The Masters counts every finished Wolf round where everyone playing is in the crew, three or more of you and nobody else.</p>
-    <label class="lbl" for="cn2">Crew name</label><input class="field" id="cn2" maxlength="20" value="${esc(C.name)}">
-    <div class="lbl">Who’s in the crew</div><div class="clubs">${roster().map(p => `<button data-mem="${p.id}" aria-pressed="${members.includes(p.id)}">${esc(p.name)}</button>`).join("")}</div>
-    <label class="lbl" for="ln2">Tournament name</label><input class="field" id="ln2" maxlength="28" value="${esc(L.name)}">
-    <label class="lbl" for="ls2">Season starts</label><input class="field" id="ls2" type="date" value="${dateVal}"><p class="legend">Leave blank to start from your first round together.</p>
+const dateIn = ms => { if (!ms) return ""; const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+function tourListSheet(){
+  openSheet(`<h3>Tournaments</h3><p>Season tables that run side by side. Anyone can create one for their own group, and it never touches anyone else’s.</p>${tours().map(t => `<button class="mi" data-tl="${t.id}"><span style="display:flex;align-items:center;gap:12px;text-align:left"><i class="jdot" style="background:${t.jacket}"></i><span>${esc(t.name)}<small>${t.members.length} players, ${t.games==="any"?"every game":"Wolf only"}${isOver(t)?", finished":""}</small></span></span><span class="go">${ic("chev")}</span></button>`).join("")}<button class="btn go" id="tnew" style="margin-top:16px">${ic("plus")}Create a tournament</button>`,
+    sh => { sh.querySelectorAll("[data-tl]").forEach(b => b.onclick = () => leagueSheet(b.dataset.tl)); sh.querySelector("#tnew").onclick = () => leagueSheet("new"); });
+}
+function leagueSheet(tid){
+  const isNew = tid==="new", T = isNew ? null : tourBy(tid || curTour().id), main = !isNew && T.main, used = tours().map(t => t.jacket);
+  let members = isNew ? (me && rosterBy(me) ? [me] : []) : T.members.slice(), points = (isNew ? [10,6,3,1] : T.points).slice(), best = isNew ? 0 : (T.best||0), games = isNew ? "any" : T.games;
+  let jacket = isNew ? (JACKET_COLOURS.find(c => !used.includes(c[0])) || JACKET_COLOURS[1])[0] : T.jacket;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const body = `<h3>${isNew ? "New tournament" : main ? `${esc(T.group)} and the Masters` : esc(T.name)}</h3>
+    <p>${main ? "The Masters counts every finished Wolf round where everyone playing is in the crew, three or more of you. Guests can join in and stay off the table." : "A tournament counts every finished round where everyone playing is one of its players, two or more of you. Guests can join in and stay off the table. It runs alongside every other tournament and never changes them."}</p>
+    ${main ? `<label class="lbl" for="cn2">Crew name</label><input class="field" id="cn2" maxlength="20" value="${esc(T.group)}">` : ""}
+    <label class="lbl" for="ln2">Tournament name</label><input class="field" id="ln2" maxlength="28" value="${isNew?"":esc(T.name)}" placeholder="Hunter Valley Open" autocomplete="off">
+    <div class="lbl">${main?"Who’s in the crew":"Players"}</div><div class="clubs">${roster().map(p => `<button data-mem="${p.id}" aria-pressed="${members.includes(p.id)}">${esc(p.name)}</button>`).join("")}</div>
+    ${main ? "" : `<p class="legend">Someone missing? They tap “I’m new, create my profile” when they first open the app, or add them from Menu, Players.</p>
+    <div class="lbl">Games that count</div><div class="seg"><button data-gm="any" aria-pressed="${games==="any"}">Every game</button><button data-gm="wolf" aria-pressed="${games==="wolf"}">Wolf only</button></div>`}
+    <label class="lbl" for="ls2">${main?"Season starts":"Starts"}</label><input class="field" id="ls2" type="date" value="${isNew ? dateIn(today.getTime()) : dateIn(T.start)}">${main?`<p class="legend">Leave blank to start from your first round together.</p>`:""}
+    ${main ? "" : `<label class="lbl" for="le2">Ends</label><input class="field" id="le2" type="date" value="${isNew?"":dateIn(T.end)}"><p class="legend">Leave the end blank for a tournament that keeps running.</p>`}
     <div class="lbl">Points for 1st, 2nd, 3rd, 4th</div><div class="seg">${POINT_SETS.map((ps,k) => `<button data-pts="${k}" aria-pressed="${ps.join()===points.join()}">${ps.join("-")}</button>`).join("")}</div>
-    <div class="opt"><span>Rounds that count<small>${best?`Your best ${best} rounds count`:"Every round counts"}</small></span><div class="num"><button id="bm" aria-label="Fewer">${ic("minus")}</button><output id="bo">${best||"All"}</output><button id="bp" aria-label="More">${ic("plus")}</button></div></div>
-    <button class="btn go" id="lsave" style="margin-top:18px">Save</button>
-    <div class="lab" style="margin-top:28px">End of season</div><p>Crowns the leader as champion, adds them to the Hall of Fame and starts a fresh table. Rounds already played stay in your history.</p>
-    <button class="hold" id="hold"><i></i><span><b>Hold to end the season</b><small>Press and hold 2 seconds</small></span></button>`;
-  openSheet(body(), sh => {
-    const rebind = () => {
-      sh.querySelectorAll("[data-mem]").forEach(b => b.onclick = () => { const id = b.dataset.mem, k = members.indexOf(id); if (k>=0) members.splice(k,1); else members.push(id); b.setAttribute("aria-pressed", members.includes(id)); haptic(); });
-      sh.querySelectorAll("[data-pts]").forEach(b => b.onclick = () => { points = POINT_SETS[+b.dataset.pts].slice(); sh.querySelectorAll("[data-pts]").forEach(x => x.setAttribute("aria-pressed", x===b)); haptic(); });
-      const setBest = v => { best = Math.max(0, Math.min(52, v)); sh.querySelector("#bo").textContent = best||"All"; haptic(); };
-      sh.querySelector("#bm").onclick = () => setBest(best===0 ? 0 : best-1); sh.querySelector("#bp").onclick = () => setBest(best+1);
-    };
-    rebind();
+    <div class="opt"><span>Rounds that count<small id="bs">${best?`Your best ${best} rounds count`:"Every round counts"}</small></span><div class="num"><button id="bm" aria-label="Fewer">${ic("minus")}</button><output id="bo">${best||"All"}</output><button id="bp" aria-label="More">${ic("plus")}</button></div></div>
+    <div class="lbl">Leader’s jacket</div><div class="sws">${JACKET_COLOURS.map(([c,l]) => `<button class="sw8" data-jk="${c}" aria-pressed="${c===jacket}" style="--c:${c}" aria-label="${l} jacket"></button>`).join("")}</div>
+    <button class="btn go" id="lsave" style="margin-top:18px">${isNew?"Create tournament":"Save"}</button>
+    ${main ? `<div class="lab" style="margin-top:28px">End of season</div><p>Crowns the leader as champion, adds them to the Hall of Fame and starts a fresh table. Rounds already played stay in your history.</p>
+    <button class="hold" id="hold"><i></i><span><b>Hold to end the season</b><small>Press and hold 2 seconds</small></span></button>`
+    : isNew ? "" : `${isOver(T) ? "" : `<div class="lab" style="margin-top:28px">Finish it</div><p>Stops counting new rounds and names the leader as the winner. The table stays to look back on.</p>
+    <button class="hold" id="hold"><i></i><span><b>Hold to finish the tournament</b><small>Press and hold 2 seconds</small></span></button>`}
+    <div class="lab" style="margin-top:28px">Delete it</div><p>Removes the tournament and its table. The rounds themselves stay in everyone’s history and stats.</p>
+    <button class="hold" id="hold2"><i></i><span><b>Hold to delete the tournament</b><small>Press and hold 2 seconds</small></span></button>`}`;
+  openSheet(body, sh => {
+    sh.querySelectorAll("[data-mem]").forEach(b => b.onclick = () => { const id = b.dataset.mem, k = members.indexOf(id); if (k>=0) members.splice(k,1); else members.push(id); b.setAttribute("aria-pressed", members.includes(id)); haptic(); });
+    sh.querySelectorAll("[data-pts]").forEach(b => b.onclick = () => { points = POINT_SETS[+b.dataset.pts].slice(); sh.querySelectorAll("[data-pts]").forEach(x => x.setAttribute("aria-pressed", x===b)); haptic(); });
+    sh.querySelectorAll("[data-gm]").forEach(b => b.onclick = () => { games = b.dataset.gm; sh.querySelectorAll("[data-gm]").forEach(x => x.setAttribute("aria-pressed", x===b)); haptic(); });
+    sh.querySelectorAll("[data-jk]").forEach(b => b.onclick = () => { jacket = b.dataset.jk; sh.querySelectorAll("[data-jk]").forEach(x => x.setAttribute("aria-pressed", x===b)); haptic(); });
+    const setBest = v => { best = Math.max(0, Math.min(52, v)); sh.querySelector("#bo").textContent = best||"All"; sh.querySelector("#bs").textContent = best ? `Your best ${best} rounds count` : "Every round counts"; haptic(); };
+    sh.querySelector("#bm").onclick = () => setBest(best===0 ? 0 : best-1); sh.querySelector("#bp").onclick = () => setBest(best+1);
     sh.querySelector("#lsave").onclick = () => {
-      if (members.length<3){ toast("A crew needs at least three players"); return; }
-      const d = sh.querySelector("#ls2").value, start = d ? new Date(d+"T00:00:00").getTime() : null;
-      const crew = { name:sh.querySelector("#cn2").value.trim().slice(0,20)||"Friday Crew", members };
-      const league = { ...leagueCfg(), name:sh.querySelector("#ln2").value.trim().slice(0,28)||"Friday Wolf Masters", points, best, start };
-      meta.crew = crew; meta.league = league; store.saveMeta({ crew, league }); closeSheet(); toast("Masters saved"); render({ keepScroll:true });
+      const name = sh.querySelector("#ln2").value.trim().slice(0,28), d = sh.querySelector("#ls2").value, start = d ? new Date(d+"T00:00:00").getTime() : null;
+      if (main){
+        if (members.length<3){ toast("A crew needs at least three players"); return; }
+        const crew = { name:sh.querySelector("#cn2").value.trim().slice(0,20)||"Friday Crew", members };
+        const league = { ...leagueCfg(), name:name||"Friday Wolf Masters", points, best, start, jacket };
+        meta.crew = crew; meta.league = league; store.saveMeta({ crew, league }); closeSheet(); toast("Masters saved"); render({ keepScroll:true }); return;
+      }
+      if (!name){ toast("Give the tournament a name"); return; }
+      if (tours().some(t => t.id!==(T&&T.id) && t.name.toLowerCase()===name.toLowerCase())){ toast("There’s already a tournament with that name"); return; }
+      if (members.length<2){ toast("Pick at least two players"); return; }
+      const de = sh.querySelector("#le2").value, end = de ? new Date(de+"T23:59:59").getTime() : null;
+      if (end && start && end < start){ toast("The end date is before the start date"); return; }
+      const id = isNew ? "t-"+newId() : T.id, prev = (meta.tournaments||{})[id] || {};
+      const t = { ...prev, id, name, members, games, points, best, start, end, jacket, createdAt:prev.createdAt||Date.now(), createdBy:prev.createdBy||me||"" };
+      meta.tournaments = { ...(meta.tournaments||{}), [id]:t }; store.saveMeta({ tournaments:{ [id]:t } });
+      closeSheet(); ui.tour = id; toast(isNew ? `${name} is up and running` : `${name} saved`);
+      if (isNew){ ui.boardTab = "masters"; go("board"); } else render({ keepScroll:true });
     };
-    holdToConfirm(sh.querySelector("#hold"), () => {
+    const hold = sh.querySelector("#hold"), hold2 = sh.querySelector("#hold2");
+    if (hold && main) holdToConfirm(hold, () => {
       const t = leagueNow(), L2 = leagueCfg(), n = (L2.seasons||[]).length + 1;
       if (!t.rounds){ toast("No rounds in this season yet"); closeSheet(); return; }
       const champ = t.rows[0], season = { name:`${L2.name} ${n}`, start:t.start, end:Date.now(), rounds:t.rounds, champion:{ id:champ.id, name:personFor(champ.id,champ.name).name }, top:t.rows.slice(0,3).map(o => ({ id:o.id, name:personFor(o.id,o.name).name, total:o.total })) };
       const league = { ...L2, seasons:(L2.seasons||[]).concat([season]), start:Date.now()+1 };
       meta.league = league; store.saveMeta({ league });
-      pixelWipe(() => { ui.boardTab = "masters"; ui.tab = "board"; ui.sub = null; render(); }).then(() => { takeover("Champion", `${season.champion.name} wins the ${L2.name}. A new season starts now.`, pxSVG(ICON.trophy,{"#":"#F2C94C"},"px big")); });
+      pixelWipe(() => { ui.tour = "main"; ui.boardTab = "masters"; ui.tab = "board"; ui.sub = null; render(); }).then(() => { takeover("Champion", `${season.champion.name} wins the ${L2.name}. A new season starts now.`, pxSVG(ICON.trophy,{"#":"#F2C94C"},"px big")); });
+    });
+    if (hold && !main) holdToConfirm(hold, () => {
+      const end = Date.now()-1, tb = tourTable(T), lead = tb.leader && personFor(tb.leader, "");
+      meta.tournaments = { ...(meta.tournaments||{}), [T.id]:{ ...meta.tournaments[T.id], end } }; store.saveMeta({ tournaments:{ [T.id]:{ end } } });
+      pixelWipe(() => { ui.tour = T.id; ui.boardTab = "masters"; ui.tab = "board"; ui.sub = null; render(); }).then(() => { if (lead) takeover("Champion", `${lead.name} wins the ${T.name}.`, pxSVG(ICON.trophy,{"#":"#F2C94C"},"px big")); else toast(`${T.name} finished`); });
+    });
+    if (hold2) holdToConfirm(hold2, () => {
+      const rest = { ...(meta.tournaments||{}) }; delete rest[T.id]; meta.tournaments = rest; store.saveMeta({ tournaments:{ [T.id]:DEL } });
+      ui.tour = null; if (ui.scope===T.id) ui.scope = "all"; closeSheet(); toast(`${T.name} deleted`); render();
     });
   });
 }
 function pastRoundSheet(){
-  const C = crewCfg(), mem = C.members.map(id => rosterBy(id)).filter(Boolean);
+  const T = curTour(), mem = T.members.map(id => rosterBy(id)).filter(Boolean), wolfOnly = T.games!=="any";
   const pos = {}; mem.forEach(p => pos[p.id] = 0);
   const posBtns = p => `<div class="seg" style="margin-top:6px">${["Out",...mem.map((_,k)=>nth(k+1))].map((l,k) => `<button data-pp="${p.id}|${k}" aria-pressed="${pos[p.id]===k}">${l}</button>`).join("")}</div>`;
-  openSheet(`<h3>Add a past round</h3><p>For Fridays played before the app kept every round. Pick each player’s finishing position. Wolf points are optional and only used to break ties.</p>
-    <label class="lbl" for="pd">Date</label><input class="field" id="pd" type="date" value="${new Date(Date.now()-7*864e5).toISOString().slice(0,10)}">
+  openSheet(`<h3>Add a past round</h3><p>${T.main ? "For Fridays played before the app kept every round." : `For a ${esc(T.name)} round that wasn’t scored in the app.`} Pick each player’s finishing position.${wolfOnly?" Wolf points are optional and only used to break ties.":""}</p>
+    <label class="lbl" for="pd">Date</label><input class="field" id="pd" type="date" value="${dateIn(T.main ? Date.now()-7*864e5 : Math.max(T.start||0, Math.min(Date.now(), T.end||Infinity)))}">
     <label class="lbl" for="pc">Course</label><input class="field" id="pc" maxlength="30" value="${esc(courseById((meta&&meta.lastCourse)||"warringah").name)}">
-    ${mem.map(p => `<div class="lbl" style="display:flex;align-items:center;gap:10px">${avatar(p,"av sm")}${esc(p.name)}<input class="field" data-wp="${p.id}" type="number" inputmode="numeric" placeholder="Wolf pts" style="margin-left:auto;width:110px;height:38px;font-size:14px"></div>${posBtns(p)}`).join("")}
-    <button class="btn go" id="psv" style="margin-top:20px">Add to the Masters</button>`,
+    ${mem.map(p => `<div class="lbl" style="display:flex;align-items:center;gap:10px">${avatar(p,"av sm")}${esc(p.name)}${wolfOnly?`<input class="field" data-wp="${p.id}" type="number" inputmode="numeric" placeholder="Wolf pts" style="margin-left:auto;width:110px;height:38px;font-size:14px">`:""}</div>${posBtns(p)}`).join("")}
+    <button class="btn go" id="psv" style="margin-top:20px">Add to the ${esc(T.main?"Masters":T.name)}</button>`,
   sh => {
     sh.querySelectorAll("[data-pp]").forEach(b => b.onclick = () => { const [id,k] = b.dataset.pp.split("|"); pos[id] = +k; sh.querySelectorAll(`[data-pp^="${id}|"]`).forEach(x => x.setAttribute("aria-pressed", x===b)); haptic(); });
     sh.querySelector("#psv").onclick = () => {
       const playing = mem.filter(p => pos[p.id]>0);
-      if (playing.length<3){ toast("Pick a finishing position for at least three players"); return; }
+      if (playing.length<T.min){ toast(`Pick a finishing position for at least ${T.min===3?"three":"two"} players`); return; }
       const d = sh.querySelector("#pd").value; if (!d){ toast("Add the date"); return; }
       const at = new Date(d+"T08:00:00").getTime(), pts = {}, ps = {};
-      playing.forEach(p => { ps[p.id] = pos[p.id]; const v = sh.querySelector(`[data-wp="${p.id}"]`).value; if (v!=="") pts[p.id] = +v; });
-      const id = "past-"+newId(), r = { id, game:"wolf", manual:{ pos:ps, pts }, players:playing.map(p => ({ id:p.id, name:p.name, hcp:+p.hcp||0 })), holes:[], results:{}, settings:{}, status:"done", league:true,
-        courseId:"", courseName:sh.querySelector("#pc").value.trim().slice(0,30)||"Past round", holesMode:"", useHcp:false, createdAt:at, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} added a past Masters round`, winners:playing.filter(p=>ps[p.id]===1).map(p=>p.id) };
+      playing.forEach(p => { ps[p.id] = pos[p.id]; const inp = sh.querySelector(`[data-wp="${p.id}"]`); if (inp && inp.value!=="") pts[p.id] = +inp.value; });
+      const manual = { pos:ps, pts }; if (!T.main) manual.t = T.id;
+      const id = "past-"+newId(), r = { id, game:"wolf", manual, players:playing.map(p => ({ id:p.id, name:p.name, hcp:+p.hcp||0 })), holes:[], results:{}, settings:{}, status:"done", league:true,
+        courseId:"", courseName:sh.querySelector("#pc").value.trim().slice(0,30)||"Past round", holesMode:"", useHcp:false, createdAt:at, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} added a past ${T.main?"Masters":T.name} round`, winners:playing.filter(p=>ps[p.id]===1).map(p=>p.id) };
       store.saveRound(id, r, true);
       if (!history.some(x => x.id===id)) history = [r].concat(history).sort((x,y) => (y.createdAt||0)-(x.createdAt||0));
-      if (leagueCfg().start && at < leagueCfg().start) toast("Added, but it’s before the season start date so it won’t count");
-      else toast("Past round added to the Masters");
+      if ((T.start && at < T.start) || (T.end && at > T.end)) toast(T.main ? "Added, but it’s before the season start date so it won’t count" : "Added, but it’s outside the tournament dates so it won’t count");
+      else toast(`Past round added to the ${T.main?"Masters":T.name}`);
       closeSheet(); ui.boardTab = "masters"; go("board");
     };
   });
@@ -2121,7 +2215,8 @@ function startGame(){
   const go2 = () => {
     const players = s.sel.map(id => { const p = setupPerson(id); const o = { id:p.id, name:p.name, hcp:+p.hcp||0 }; if (p.guest) o.guest = true; if (p.av) o.av = { ...p.av }; if (p.line) o.line = p.line; if (s.game==="three") o.clubs = (s.clubs[id]||[]).slice(); return o; });
     const id = newId(), now = Date.now();
-    const r = { league: s.league!==false, id, game:s.game, courseId:c.id, courseName:c.name, holesMode:s.holesMode, holes, players, settings:{ ...s.settings, noMasters: s.game==="wolf" && crewMatch(s.sel) && s.league===false }, useHcp:!!s.useHcp, results:{}, status:"live", createdAt:now, updatedAt:now, lastBy:device, lastMsg:`${myName()} started ${GAMES[s.game].name}`, winners:[] };
+    const off = {}; setupTours(s).forEach(x => { if (!x.on) off[x.t.id] = (s.tours && x.t.id in s.tours) ? true : "auto"; });
+    const r = { league:true, id, game:s.game, courseId:c.id, courseName:c.name, holesMode:s.holesMode, holes, players, settings:{ ...s.settings, off, noMasters:false }, useHcp:!!s.useHcp, results:{}, status:"live", createdAt:now, updatedAt:now, lastBy:device, lastMsg:`${myName()} started ${GAMES[s.game].name}`, winners:[] };
     if (live()) store.saveRound(round.id, { status:"ended", updatedAt:now });
     store.saveRound(id, r, true);
     meta.active = id; meta.lastCourse = c.id; store.saveMeta({ active:id, lastCourse:c.id });
@@ -2133,8 +2228,8 @@ function startGame(){
   else go2();
 }
 function finishRound(){
-  const r = round, c = ENGINE.compute(r), champs = (leagueCfg().seasons||[]).map(x => x.champion && x.champion.id);
-  const jacketBefore = JACKET;
+  const r = round, c = ENGINE.compute(r), champs = champIds();
+  const leadBefore = {}; tours().forEach(t => { if (!isOver(t)) leadBefore[t.id] = tourTable(t, r.id).leader; });
   const pr = playedRounds(), before = {}; r.players.forEach(p => { if (!p.guest) before[p.id] = ENGINE.badgesFor(pr.filter(x => x.id!==r.id), p.id, champs).filter(b=>b.got).map(b=>b.k); });
   const winners = c.winners.map(p => r.players[p].id);
   store.saveRound(r.id, { status:"done", winners, updatedAt:Date.now(), lastBy:device, lastMsg:`${myName()} finished the round` });
@@ -2143,7 +2238,8 @@ function finishRound(){
   const fresh = []; r.players.forEach(p => { if (p.guest) return; ENGINE.badgesFor(pr, p.id, champs).filter(b => b.got && !before[p.id].includes(b.k)).forEach(b => fresh.push(`${p.name}: ${b.name}`)); });
   if (fresh.length) setTimeout(() => toast(`New badge${fresh.length>1?"s":""}! ${fresh.slice(0,3).join(". ")}`), 2600);
   refreshJacket();
-  if (JACKET && JACKET!==jacketBefore && r.league!==false && inCrew(r)) setTimeout(() => { const p = personFor(JACKET, ""); takeover("New jacket", `${p.name} takes the lead in the ${leagueCfg().name}.`, `<span style="display:block;width:150px;height:150px">${avSVG(avOf(p),"px")}</span>`); }, 3400);
+  const moved = tours().find(t => { if (isOver(t)) return false; const tb = tourTable(t); return tb.leader && tb.leader!==leadBefore[t.id] && tb.weeks.some(w => w.roundId===r.id); });
+  if (moved){ const p = personFor(tourTable(moved).leader, ""); setTimeout(() => takeover("New jacket", `${p.name} takes the lead in the ${moved.name}.`, `<span style="display:block;width:150px;height:150px">${avSVG({ ...avOf(p), jacket:moved.jacket },"px")}</span>`), 3400); }
   ui.boardTab = "round"; go("board");
 }
 function endRound(){
@@ -2355,9 +2451,12 @@ const ACT = {
   who: () => askWho(),
   pastRound: () => pastRoundSheet(),
   missFix: v => { haptic(); fixMiss(v); },
-  masters: () => { haptic(); ui.boardTab = "masters"; go("board"); },
+  masters: v => { haptic(); if (v) ui.tour = v; ui.boardTab = "masters"; go("board"); },
+  tour: v => { ui.tour = v; haptic(); render({ keepScroll:true }); },
+  newTour: () => { haptic(); leagueSheet("new"); },
+  tourList: () => tourListSheet(),
   scope: v => { ui.scope = v; haptic(); render({ keepScroll:true }); },
-  leagueCfg: () => leagueSheet(),
+  leagueCfg: () => leagueSheet(curTour().id),
   react: v => reactSheet(v),
   recap: v => { haptic(); recapCard(v); },
   junkOpt: v => { const s = ui.setup.settings, l = s.junk = (s.junk||[]).slice(), k = l.indexOf(v); if (k>=0) l.splice(k,1); else l.push(v); haptic(); render({ keepScroll:true }); },
@@ -2382,7 +2481,7 @@ document.addEventListener("change", e => {
   const t = e.target; if (!t.dataset || !t.dataset.a) return;
   if (t.dataset.a==="hcp"){ ui.setup.useHcp = t.checked; haptic(); render({ keepScroll:true }); }
   else if (t.dataset.a==="optB"){ ui.setup.settings[t.dataset.v] = t.checked; haptic(); }
-  else if (t.dataset.a==="league"){ ui.setup.league = t.checked; haptic(); }
+  else if (t.dataset.a==="tourOpt"){ ui.setup.tours = { ...(ui.setup.tours||{}), [t.dataset.v]:t.checked }; haptic(); }
   else if (t.dataset.a==="snakeOpt"){ ui.setup.settings.snake = t.checked; haptic(); render({ keepScroll:true }); }
   else if (t.dataset.a==="awake"){ localStorage.setItem(LSK.awake, t.checked?"on":"off"); haptic(); keepAwake(); }
 });
